@@ -56,62 +56,59 @@ Cost, auth, data retention:
 - `evidence/` - captured probe output (this run's raw data)
 
 ## Use it on your own prompts (no GPU, no server)
-`analyze.py --prompts your-prompts.jsonl` runs a text-level diagnostic on prompts one
-app already sent to one model. It needs no GPU and no live server. Input is JSONL:
-one `{"prompt": "..."}` or `{"messages": [{"role": "...", "content": "..."}]}` per line.
+`python3 analyze.py --prompts your-prompts.jsonl [--no-examples]` runs a text-level
+diagnostic on prompts one app already sent to one model. Input is JSONL, one row per
+request: `{"prompt": "..."}` or `{"messages": [{"role": "...", "content": ...}]}`.
 
-It reports:
-- how many characters of leading text all prompts share, and the same statistic
-  across prompt pairs (so one outlier cannot hide a systematic early break);
-- the first line where prompts differ, with example values and how many distinct
-  values that line takes (a per-request id/timestamp looks different from a small
-  set like a user or tenant field);
-- how much identical text sits AFTER that first difference, which a leading-prefix
-  cache cannot reuse across these requests;
-- whether the prompts are the same lines in a different order (e.g. reordered
-  tool or document lists).
+It reports the shared leading text (global and across prompt pairs), the first line where
+prompts differ with how many distinct values that line takes, how much identical text
+sits after that point, and whether prompts are the same lines in a different order.
 
-What it does NOT do: it does not measure any engine's cache, does not count tokens
-(character offsets only), and does not predict a hit rate. Prompt text can only show
-layout-level candidate causes. Server flags, cache size/eviction, block granularity
-and routing are separate causes this file cannot see. Moving or reordering prompt
-content can change model behavior - the app owner decides and re-checks outputs.
+**Limits - read before trusting it**
+- Text only: characters, not tokens, and not an engine measurement. No hit-rate prediction.
+- Messages are joined as `role: content`, which is NOT the model's real chat template;
+  the template can shift where the true break lies.
+- `content` may be a string or a list of text parts. Image/tool parts, null content and
+  non-UTF-8 files are rejected with `INCONCLUSIVE` (exit 2), not guessed.
+- "Early variation" uses a fixed rule of thumb (shared text ends before 50% of the
+  shortest prompt). A later break can still cost reuse.
+- `looks_like` labels (timestamp/uuid/hex/number) are simple patterns on one line shape
+  (e.g. `YYYY-MM-DD HH:MM`); epoch seconds or other date styles fall through to
+  "contains-number" or "free-text". Treat it as a hint, never a culprit.
+- Prompt text alone cannot show server flags, cache size/eviction, block granularity or routing.
+- **Privacy:** the report echoes up to 90 characters of real prompt text per example.
+  Use `--no-examples` before sharing output, and never paste the default output publicly.
+  Secrets inside prompts can appear in it.
 
-Two labeled examples ship in `examples/` (synthetic, text-level only):
+Two labeled synthetic examples ship in `examples/`:
 ```
-python3 analyze.py --prompts examples/user_id_midprompt.jsonl    # mid-prompt account id
-python3 analyze.py --prompts examples/reordered_tool_lines.jsonl # same tools, different order
-```
-Bad input fails closed with `INCONCLUSIVE` (exit code 2) instead of guessing.
-
-## Report on the serving environment (no probing, local files only)
-`env_report.py` collects what a serving setup already says about itself and keeps
-facts, observations and unknowns separate. It reads only local files the app owner
-gives it - it never opens a network connection, never SSHes anywhere, and reports
-every field it cannot find as "not available" instead of guessing.
-
-```
-python3 env_report.py --log vllm.log --metrics snap1.txt --metrics-later snap2.txt \
-    --mean-prompt-tokens 5796
-# on the serving host only, add GPU names:
-python3 env_report.py --log vllm.log --with-nvidia-smi
+python3 analyze.py --prompts examples/user_id_midprompt.jsonl
+python3 analyze.py --prompts examples/reordered_tool_lines.jsonl
 ```
 
-- `--log`: a vLLM startup/runtime log. Parsed facts include engine version, model,
-  `enable_prefix_caching`, dtype, max_seq_len, GPU KV cache size in tokens and GiB,
-  total GPU memory, and the gpu_memory_utilization setting - each with its source.
-- `--metrics` / `--metrics-later`: two Prometheus `/metrics` snapshots. A hit-rate
-  reading is made ONLY from the counter delta between two snapshots; lifetime
-  counters and a single usage snapshot are reported as facts with no conclusion
-  (one snapshot cannot separate eviction from a cold start or a burst).
-- `--mean-prompt-tokens`: enables one arithmetic capacity ratio (KV cache tokens
-  vs your mean prompt), labeled as observed/given numbers.
-- `--with-nvidia-smi`: queries the machine running the report; only meaningful on
-  the serving host, and labeled as such.
+## Report on the serving environment (local files only, no probing)
+`env_report.py` reads local files the app owner provides. It opens no network connection and
+never SSHes anywhere. Anything it cannot find is "not available" and listed under unknowns.
 
-Observations are tied to observed values (example: `enable_prefix_caching=False`
-means no prompt layout can hit a cache that is off). Static metadata is never used
-to claim a hardware bottleneck. Labeled synthetic fixtures live in `examples/env/`.
+```
+python3 env_report.py --log vllm.log --metrics snap1.txt --metrics-later snap2.txt --mean-prompt-tokens 5796
+python3 env_report.py --log vllm.log --with-nvidia-smi   # on the serving host only
+```
+- `--log`: vLLM startup log. Parsed: version, model, served name, `enable_prefix_caching`,
+  dtype, max_seq_len, tensor parallel size, KV cache tokens/GiB, GPU memory, utilization setting.
+  If the log has several engine starts, the LAST one is used and a warning is shown.
+- `--metrics` / `--metrics-later`: Prometheus text (or a JSON dict). Every label set (engine,
+  model) is kept separate, never merged. A hit-rate window needs two snapshots and is
+  INCONCLUSIVE on counter reset, missing series, hits > queries or different label sets.
+  A single snapshot or lifetime counters carry no hit-rate or eviction conclusion.
+- Supported build: parsing was written against vLLM 0.26.1rc1 log lines and metric names
+  (also reads `vllm:kv_cache_usage_perc` and `vllm:gpu_prefix_cache_*` aliases). Other builds
+  may differ; unrecognized files fail closed with `INCONCLUSIVE`, they are not guessed.
+- `--with-nvidia-smi` names the GPUs of the machine running the report. That is the model
+  server only if you run it there; a warning is printed when combined with `--log`.
+- Metadata (settings, memory sizes, GPU names) is context, not a diagnosis of a hardware bottleneck.
+- Privacy: the output includes the model path/name from the log. Labeled synthetic fixtures
+  are in `examples/env/`.
 
 ## Reproduce
 ```

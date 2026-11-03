@@ -121,12 +121,16 @@ def diagnose(rows):
     return findings
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "--prompts":
+    if len(sys.argv) in (3, 4) and sys.argv[1] == "--prompts":
         import prompt_diag
-        return prompt_diag.main(sys.argv[2])
+        redact = len(sys.argv) == 4 and sys.argv[3] == "--no-examples"
+        if len(sys.argv) == 4 and not redact:
+            print("usage: analyze.py --prompts prompts.jsonl [--no-examples]")
+            return 2
+        return prompt_diag.main(sys.argv[2], redact=redact)
     if len(sys.argv) != 3:
         print("usage: analyze.py before.jsonl after.jsonl   (measured Glimmer pair)\n"
-              "       analyze.py --prompts prompts.jsonl   (text-level prompt diagnostic)")
+              "       analyze.py --prompts prompts.jsonl [--no-examples]   (text-level prompt diagnostic)")
         return 2
     before, after = load(sys.argv[1]), load(sys.argv[2])
     # Fail closed on structural problems before printing any numbers.

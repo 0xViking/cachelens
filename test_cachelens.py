@@ -291,10 +291,16 @@ check("env_report parses real vllm.log facts",
       res["sources"]["gpu_kv_cache_tokens"] == "server log")
 
 # 12b. missing fields are 'not available', never guessed
-res = env_report.report("some random log line\n", None, None, False)
-check("env_report unknown fields stay not available",
+# partial log: only some settings present -> the rest stay 'not available' and are listed unknown
+res = env_report.report("Initializing a V1 LLM engine (v0.26.1) with config: model='m/x', dtype=torch.bfloat16\n",
+                        None, None, False)
+check("env_report partial log: missing fields are not available and listed as unknown",
       res["facts"]["enable_prefix_caching"] == "not available" and
-      res["facts"]["gpu_kv_cache_tokens"] == "not available")
+      "enable_prefix_caching" in res["unknowns"] and res["facts"]["dtype"] == "bfloat16")
+try:
+    env_report.report("some random log line\n", None, None, False)
+    check("env_report unrecognized log fails closed", False)
+except env_report.BadInput: check("env_report unrecognized log fails closed", True)
 
 # 12c. prefix caching disabled is called out from config evidence
 res = env_report.report(open("examples/env/vllm_prefix_off.log").read(), None, None, False)
@@ -306,7 +312,7 @@ check("env_report flags enable_prefix_caching=False",
 res = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, False)
 text = json.dumps(res)
 check("env_report single snapshot makes no eviction/hit-rate claim",
-      "window" not in res["facts"] and "eviction" not in text.lower().replace(
+      res["windows"] == [] and "eviction" not in text.lower().replace(
           "cannot separate eviction pressure from a cold start or a burst", "").replace(
           "layout, capacity, eviction or routing", "") and
       "lifetime counters" in res["facts"].get("prefix_cache_counters_note", ""))
@@ -315,13 +321,13 @@ check("env_report single snapshot makes no eviction/hit-rate claim",
 res = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, False,
                         metrics_later_text=open("examples/env/metrics_snap2.txt").read())
 check("env_report window hit rate = 50/1000 = 5.0%",
-      res["facts"].get("window_prefix_cache_hit_pct") == 5.0)
+      [w.get("hit_pct") for w in res["windows"]] == [5.0])
 
 # 12f. counterexample: zero query delta -> no hit-rate reading
 res = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, False,
                         metrics_later_text=open("examples/env/metrics_snap1.txt").read())
 check("env_report zero-delta window says no traffic, not 0% hits",
-      "window_prefix_cache_hit_pct" not in res["facts"] and
+      res["windows"][0]["status"] == "no_traffic" and "hit_pct" not in res["windows"][0] and
       any("no prefix-cache queries" in o["observation"] for o in res["observations"]))
 
 # 12g. capacity ratio only when caller supplies mean prompt tokens
@@ -345,6 +351,112 @@ check("env_report missing file -> INCONCLUSIVE rc=2", r.returncode == 2)
 r = er_main(["--log", "examples/env/vllm_prefix_off.log"])
 check("env_report CLI example: prefix-off log flagged",
       r.returncode == 0 and "prefix caching is disabled" in r.stdout)
+
+# 13. nasty counterexamples for env_report (review findings B1-B4, S1-S6) and prompt_diag (P1,P2,P6)
+Q, H, U = "vllm:prefix_cache_queries_total", "vllm:prefix_cache_hits_total", "vllm:gpu_cache_usage_perc"
+def mtxt(q, h, label='{engine="0",model_name="m"}', extra=""):
+    return f"{Q}{label} {q}\n{H}{label} {h}\n{extra}"
+
+def win(a, b):
+    return env_report.report(None, a, None, False, metrics_later_text=b)["windows"]
+
+# B1 counter reset / missing counters never read as 'no traffic' or a rate
+w = win(mtxt(1000, 100), mtxt(100, 10))
+check("env_report counter reset -> inconclusive, no rate", w[0]["status"] == "inconclusive" and "hit_pct" not in w[0])
+w = win(mtxt(1000, 100), f"{U}{{engine=\"0\"}} 0.5\n")
+check("env_report counters missing in snapshot 2 -> inconclusive",
+      all(x["status"] == "inconclusive" for x in w))
+# B2 hits > queries in window rejected (no 500%)
+w = win(mtxt(100, 0), mtxt(110, 50))
+check("env_report hits>queries window -> inconclusive", w[0]["status"] == "inconclusive" and "inconsistent" in w[0]["reason"])
+# B3 two engines kept separate, never collapsed
+two = (mtxt(1000, 100, '{engine="0"}') + mtxt(500, 50, '{engine="1"}'))
+two2 = (mtxt(2000, 600, '{engine="0"}') + mtxt(600, 51, '{engine="1"}'))
+w = win(two, two2)
+check("env_report two engines -> two separate windows (50.0% and 1.0%)",
+      sorted(x["hit_pct"] for x in w) == [1.0, 50.0] and len(w) == 2)
+# B3 different series set across snapshots (different pod/labels) -> inconclusive per series
+w = win(mtxt(1000, 100, '{engine="0"}'), mtxt(2000, 600, '{engine="9"}'))
+check("env_report different label sets across snapshots -> inconclusive",
+      all(x["status"] == "inconclusive" for x in w))
+# B4 label value containing '}' and trailing timestamp both parse
+t = 'vllm:prefix_cache_queries_total{engine="0",model_name="a}b"} 7 1700000000\n'
+mt = env_report.parse_metrics(t)
+check("env_report parses brace-in-label and trailing timestamp", list(mt.values()) == [7.0])
+mt = env_report.parse_metrics('vllm:gpu_prefix_cache_hits_total{e="0"} 3\nvllm:kv_cache_usage_perc{e="0"} 0.4\n')
+check("env_report parses alias metric names", len(mt) == 2)
+res = env_report.report(None, 'vllm:kv_cache_usage_perc{engine="0"} 0.40\n', None, False)
+check("env_report newer kv_cache_usage_perc name is used",
+      any("KV cache usage was 40%" in o["observation"] for o in res["observations"]))
+# S1 log passed as metrics -> INCONCLUSIVE rc 2; metrics passed as log too
+r = er_main(["--metrics", "evidence/vllm.log"])
+check("env_report log-as-metrics -> INCONCLUSIVE rc=2", r.returncode == 2 and "INCONCLUSIVE" in r.stdout)
+r = er_main(["--log", "examples/env/metrics_snap1.txt"])
+check("env_report metrics-as-log -> INCONCLUSIVE rc=2", r.returncode == 2)
+# S2 two engine starts: last one wins, warning shown
+two_logs = ("Initializing a V1 LLM engine (v0.10.0) with config: model='old/m', enable_prefix_caching=False\n"
+            "Initializing a V1 LLM engine (v0.26.1) with config: model='new/m', enable_prefix_caching=True\n")
+res = env_report.report(two_logs, None, None, False)
+check("env_report two engine starts: last wins + warning",
+      res["facts"]["vllm_version"] == "0.26.1" and res["facts"]["enable_prefix_caching"] is True and
+      any("2 engine starts" in o["observation"] for o in res["observations"]))
+# S3 model name mismatch warned
+res = env_report.report("Initializing a V1 LLM engine (v1) with config: model='a/b', served_model_name=svc-a, enable_prefix_caching=True\n",
+                        'vllm:gpu_cache_usage_perc{model_name="svc-z"} 0.1\n', None, False)
+check("env_report model-name mismatch warned",
+      any("does not match" in o["observation"] for o in res["observations"]))
+# S4 non-positive / non-finite mean prompt tokens rejected
+for bad in (-5, 0, float("nan"), float("inf")):
+    try:
+        env_report.report(open("evidence/vllm.log", errors="replace").read(), None, bad, False)
+        check(f"env_report mean_prompt_tokens={bad} rejected", False)
+    except env_report.BadInput: check(f"env_report mean_prompt_tokens={bad} rejected", True)
+r = er_main(["--log", "evidence/vllm.log", "--mean-prompt-tokens", "-5"])
+check("env_report CLI negative mean -> INCONCLUSIVE rc=2", r.returncode == 2)
+# S6 invalid JSON / JSON array / non-finite / non-UTF8 -> INCONCLUSIVE, no traceback
+for name, content in (("bad.json", '{"a": '), ("arr.json", "[1,2]"),
+                      ("nan.json", '{"vllm:prefix_cache_queries_total{e=\\"0\\"}": NaN}')):
+    f = os.path.join(T, name); open(f, "w").write(content)
+    r = er_main(["--metrics", f])
+    check(f"env_report {name} -> INCONCLUSIVE rc=2 no traceback",
+          r.returncode == 2 and "Traceback" not in r.stderr)
+f = os.path.join(T, "binary.log"); open(f, "wb").write(b"\xff\xfe\x80\x81 not utf8 \xff")
+r = er_main(["--log", f])
+check("env_report non-UTF8 log -> INCONCLUSIVE rc=2 no traceback", r.returncode == 2 and "Traceback" not in r.stderr)
+r = pd_run(f)
+check("prompt_diag non-UTF8 file -> INCONCLUSIVE rc=2 no traceback", r.returncode == 2 and "Traceback" not in r.stderr)
+# metrics-later without metrics rejected
+try:
+    env_report.report(None, None, None, False, metrics_later_text=mtxt(1, 1)); check("env_report later without first rejected", False)
+except env_report.BadInput: check("env_report later without first rejected", True)
+
+# P1 content parts + BOM supported; non-text parts rejected clearly
+rows = [{"messages": [{"role": "user", "content": [{"type": "text", "text": "hello A"}]}]},
+        {"messages": [{"role": "user", "content": [{"type": "text", "text": "hello B"}]}]}]
+f = os.path.join(T, "parts.jsonl")
+with open(f, "w", encoding="utf-8-sig") as fh:
+    for o in rows: fh.write(json.dumps(o) + "\n")
+r = pd_run(f)
+check("prompt_diag text content parts + UTF-8 BOM supported", r.returncode == 0)
+f = pd_write("img.jsonl", [{"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}]},
+                           {"messages": [{"role": "user", "content": "t"}]}])
+r = pd_run(f)
+check("prompt_diag non-text content part -> INCONCLUSIVE", r.returncode == 2 and "text content parts" in r.stdout)
+# P2 --no-examples redacts prompt fragments
+f = pd_write("secret.jsonl", [{"prompt": "head\nSECRET-KEY sk-abc123\n" + "z" * 80},
+                              {"prompt": "head\nSECRET-KEY sk-zzz999\n" + "z" * 80}])
+r = subprocess.run([sys.executable, "analyze.py", "--prompts", f, "--no-examples"], capture_output=True, text=True)
+check("prompt_diag --no-examples leaves no prompt text in output",
+      r.returncode == 0 and "sk-abc123" not in r.stdout and "SECRET" not in r.stdout and "redacted" in r.stdout)
+r = pd_run(f)
+check("prompt_diag default output DOES echo fragments (documented)", "SECRET-KEY" in r.stdout)
+# P6 two differing prompts are not called a per-request id
+res = prompt_diag.diagnose(["h\nA\n" + "p" * 100, "h\nB\n" + "p" * 100])
+note = res["varying_lines_in_first_prompt"][0]["cardinality_note"]
+check("prompt_diag small-n does not claim per-request id", "does not show a per-request id" in note)
+# P4 heuristic is labeled
+res = prompt_diag.diagnose(["a" * 10 + "\nX" + "q" * 200, "a" * 10 + "\nY" + "q" * 200])
+check("prompt_diag early-variation labeled heuristic", "heuristic" in res)
 
 print()
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))

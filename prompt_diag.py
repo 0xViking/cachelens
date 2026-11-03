@@ -21,6 +21,20 @@ _UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 _HEX = re.compile(r"\b[0-9a-fA-F]{12,}\b")
 _NUM = re.compile(r"\d+")
 
+def _content_text(c, i):
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list) and c:
+        texts = []
+        for part in c:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                texts.append(part["text"])
+            else:
+                raise BadInput(f"row {i}: only text content parts are supported "
+                               "(found a non-text part such as an image or tool call)")
+        return "\n".join(texts)
+    raise BadInput(f"row {i}: message content must be a string or a list of text parts")
+
 def render(row, i):
     if not isinstance(row, dict):
         raise BadInput(f"row {i}: expected a JSON object")
@@ -30,17 +44,16 @@ def render(row, i):
     if isinstance(msgs, list) and msgs:
         parts = []
         for m in msgs:
-            if not (isinstance(m, dict) and isinstance(m.get("role"), str)
-                    and isinstance(m.get("content"), str)):
-                raise BadInput(f"row {i}: messages need string role and string content")
-            parts.append(f"{m['role']}: {m['content']}")
+            if not (isinstance(m, dict) and isinstance(m.get("role"), str)):
+                raise BadInput(f"row {i}: each message needs a string role")
+            parts.append(f"{m['role']}: {_content_text(m.get('content'), i)}")
         return "\n".join(parts)
     raise BadInput(f"row {i}: need a string 'prompt' or a non-empty 'messages' list")
 
 def load(path):
     prompts = []
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8-sig") as f:
             for i, line in enumerate(f, 1):
                 if line.strip():
                     try:
@@ -49,6 +62,8 @@ def load(path):
                         raise BadInput(f"line {i}: invalid JSON ({e.msg})")
     except OSError as e:
         raise BadInput(f"cannot read {path}: {e.strerror}")
+    except UnicodeDecodeError:
+        raise BadInput(f"{path} is not valid UTF-8 text")
     return prompts
 
 def looks_like(line):
@@ -75,7 +90,7 @@ def pairwise_prefix_stats(prompts):
     return {"min_chars": vals[0], "median_chars": vals[len(vals) // 2],
             "max_chars": vals[-1], "pairs_sampled": len(vals)}
 
-def diagnose(prompts):
+def diagnose(prompts, redact=False):
     if len(prompts) < 2:
         raise BadInput("need at least 2 prompts to compare")
     if any(not p for p in prompts):
@@ -111,7 +126,8 @@ def diagnose(prompts):
     out["first_divergence"] = {
         "line_index": d, "char_offset": cp,
         "distinct_values_at_that_line": n if len(div_vals) >= n else len(div_vals),
-        "examples": [_clip(v) for v in div_vals[:4]],
+        "examples": (["[redacted by --no-examples]"] * min(4, len(div_vals))
+                     if redact else [_clip(v) for v in div_vals[:4]]),
         "looks_like": looks_like(div_vals[0]),
     }
     stable = set.intersection(*[set(l) for l in lines]) - {""}
@@ -128,9 +144,12 @@ def diagnose(prompts):
         vals = {l[idx] for l in lines if idx < len(l)}
         return len(vals)
     out["varying_lines_in_first_prompt"] = [
-        {"line_index": i, "looks_like": looks_like(x), "example": _clip(x),
+        {"line_index": i, "looks_like": looks_like(x),
+         "example": "[redacted by --no-examples]" if redact else _clip(x),
          "distinct_values": distinct_at(i),
-         "cardinality_note": ("one value per prompt (likely a per-request id or timestamp)"
+         "cardinality_note": (("one value per prompt (consistent with a per-request id or timestamp)"
+                              if n >= 5 else
+                              "one value per prompt, but with only %d prompts this does not show a per-request id" % n)
                               if distinct_at(i) >= n else
                               "%d distinct values across %d prompts (a small set, e.g. a user or tenant field)"
                               % (distinct_at(i), n))}
@@ -145,6 +164,8 @@ def diagnose(prompts):
                           "Ordering alone ends the shared leading text at char %d." % cp)
     elif cp < 0.5 * min(lens):
         out["finding"] = "early-variation"
+        out["heuristic"] = ("'early' means the shared text ends before 50% of the shortest prompt; "
+                            "a fixed rule of thumb, not a measured threshold - a later break can still cost reuse")
         out["verdict"] = ("The shared leading text ends early (char %d, line %d): that line "
                           "takes %d distinct value(s) across these prompts, and %.1f%% of the "
                           "first prompt is stable text that follows it. If this server also "
@@ -163,10 +184,10 @@ def diagnose(prompts):
                       "model behavior: the app owner must decide and re-check outputs.")
     return out
 
-def main(path):
+def main(path, redact=False):
     import sys
     try:
-        res = diagnose(load(path))
+        res = diagnose(load(path), redact=redact)
     except BadInput as e:
         print(f"INCONCLUSIVE - {e}")
         return 2
