@@ -89,14 +89,10 @@ def diagnose(rows):
     if len(prompts) < 2:
         return findings
     # Global common-prefix length across ALL captured prompts (not just the
-    # first pair). This is a character offset, not tokens.
-    div = 0
-    while True:
-        chars = {p[div] for p in prompts if div < len(p)}
-        if len(chars) == 1 and len(chars) == len({p[div] for p in prompts}) and all(div < len(p) for p in prompts):
-            div += 1
-        else:
-            break
+    # first pair). Character offset, not tokens; safe on prefix-of-another
+    # inputs (os.path.commonprefix handles strict-prefix cases).
+    import os.path
+    div = len(os.path.commonprefix(prompts))
     a = prompts[0]
     total = len(a)
     ctx = a[max(0, div-40):div+40].replace("\n", "\\n")
@@ -169,13 +165,45 @@ def main():
     if [r.get("id") for r in before] != [r.get("id") for r in after]:
         print("\nINCONCLUSIVE - request ids do not pair across variants")
         return 2
-    # Expected variant relationship: removing the per-request timestamp line
-    # must make each ts_before prompt identical to its ts_after pair
-    # (this run's actual transformation - do not generalize).
+    # Expected variant relationship, non-vacuous: each pair must differ;
+    # ts_before must START with exactly one [request_time=...] line; ts_after
+    # must contain exactly one occurrence AFTER the common text; and removing
+    # that one field must make the pair identical.
     import re
-    ts = re.compile(r"^\[request_time=[^\]]+\]\n?", re.M)
+    field = re.compile(r"\[request_time=[^\]]+\]")
     for rb, ra in zip(before, after):
-        if ts.sub("", rb["prompt"]) != ts.sub("", ra["prompt"]):
+        pb, pa = rb["prompt"], ra["prompt"]
+        if pb == pa:
+            print(f"\nINCONCLUSIVE - {rb.get('id')}: prompts identical across "
+                  "variants; no transformation to validate")
+            return 2
+        m0 = field.match(pb)  # anchored at position 0
+        hits_a = field.findall(pa)
+        if not m0 or len(field.findall(pb)) != 1:
+            print(f"\nINCONCLUSIVE - {rb.get('id')}: ts_before does not start "
+                  "with exactly one [request_time=...] field")
+            return 2
+        if len(hits_a) != 1 or pa.startswith(m0.group(0)):
+            print(f"\nINCONCLUSIVE - {rb.get('id')}: ts_after does not hold the "
+                  "timestamp field after the shared text")
+            return 2
+        # The actual transformation in this workload: ts_before carries
+        # "[request_time=X]\n" at the very start; ts_after carries the SAME
+        # field as "\n[request_time=X]" later in the prompt. Validate exactly
+        # that, and that stripping it leaves identical prompts.
+        tb = m0.group(0)
+        ma2 = field.search(pa)
+        if ma2.group(0) != tb:
+            print(f"\nINCONCLUSIVE - {rb.get('id')}: timestamp value differs "
+                  "between variants")
+            return 2
+        if ma2.start() == 0 or pa[ma2.start()-1] != "\n":
+            print(f"\nINCONCLUSIVE - {rb.get('id')}: ts_after timestamp is not "
+                  "placed after shared text")
+            return 2
+        stripped_b = pb[len(tb) + 1:]  # drop leading field + its newline
+        stripped_a = pa.replace("\n" + tb, "", 1)
+        if stripped_b != stripped_a:
             print(f"\nINCONCLUSIVE - {rb.get('id')}: prompts are not the "
                   "expected timestamp-move pair")
             return 2
@@ -185,7 +213,7 @@ def main():
         return 2
     ok = (ma["hit_rate_pct"] >= 75.0
           and ma["hit_rate_pct"] - mb["hit_rate_pct"] >= 50.0)
-    print(f"\n{'OBSERVED INCREASE' if ok else 'NO SIGNIFICANT INCREASE'}: "
+    print(f"\n{'OBSERVED INCREASE' if ok else 'THRESHOLD NOT MET'}: "
           f"prefix-cache hit rate {mb['hit_rate_pct']}% -> {ma['hit_rate_pct']}% "
           f"on identical prompt volume ({mb['prompt_tokens_queried']} tokens), "
           f"with the validated timestamp-move transformation applied. "

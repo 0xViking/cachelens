@@ -10,17 +10,18 @@ prefix stops caching, latency rises - and nothing tells you why."
 ## 0:15-0:45 The broken workload
 Screen: terminal replay of evidence/ts_before.probe.log (18 requests,
 prompt=5796 tokens each, ~3.7s per request) + metrics delta 1,088/104,328.
-Caption: "18 agent requests share a 25.6KB runbook prefix. vLLM's prefix
+Caption: "18 agent requests share a 25.5KB runbook prefix. vLLM's prefix
 cache should absorb it. Measured hit rate: 1.0% (1,088 of 104,328 tokens)."
 
 ## 0:45-1:30 Diagnosis
 Screen: analyze.py output - diverges_at_char 28, the [request_time=...]
 context snippet, verdict.
-Caption: "CacheLens diffs the captured prompts and finds the first character
-where requests stop matching (char 28): a timestamp placed BEFORE the shared
-prefix. Tokens after it cannot match cached blocks from other requests."
+Caption: "CacheLens diffs the captured prompts: the common leading prefix
+ends at char 28 - a timestamp placed BEFORE the shared prefix. Early
+variation breaks reuse of the long shared prefix; the low measured hit rate
+is consistent with that layout."
 
-## 1:30-2:10 Verified fix
+## 1:30-2:10 Replay result
 Screen: ts_after metrics delta 97,696/104,328 (93.6%), probe log ~2.4s/req,
 OBSERVED INCREASE line.
 Caption: "Moving per-request fields after the shared prefix coincided with

@@ -83,54 +83,70 @@ r = subprocess.run([sys.executable, "analyze.py",
                    capture_output=True, text=True)
 check("missing evidence file handled", r.returncode != 0 and "Traceback" not in r.stderr)
 
-# 9a. counterexample: identical prompts across windows -> NOT an increase (rc 2)
-import re
-def paired_rows(variant, n, ptoks, ts_move=True, idprefix="req-"):
+# 9a. counterexamples on the timestamp-move validator
+def paired_rows(variant, n, ptoks, idprefix="req-", tstamp=None, layout="move"):
     rows = []
     for i in range(n):
-        p = (f"[request_time=2026-11-04T09:{15+i:02d}:00+05:30]\n" + "x" * 100
-             if variant == "ts_before" else
-             "x" * 100 + f"\n[request_time=2026-11-04T09:{15+i:02d}:00+05:30]")
+        t = tstamp or f"2026-11-04T09:{15+i:02d}:00+05:30"
+        f_ = f"[request_time={t}]"
+        if layout == "move":
+            p = (f_ + "\n" + "x" * 100) if variant == "ts_before" else ("x" * 100 + "\n" + f_)
+        elif layout == "identical":
+            p = "x" * 100 + "\n" + f_
+        elif layout == "nofield":
+            p = "x" * 110
         rows.append({"id": f"{idprefix}{i}", "variant": variant, "prompt": p,
                      "prompt_tokens": ptoks, "cached_tokens": None, "error": None})
     return rows
-d3, d4 = os.path.join(T, "v3"), os.path.join(T, "v4"); os.makedirs(d3); os.makedirs(d4)
-# identical prompts (no timestamp move) but metrics claim huge improvement
-for d, v in ((d3, "ts_before"), (d4, "ts_after")):
-    with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
-        for r in paired_rows(v, 18, 100): fh.write(json.dumps(r) + "\n")
-write_metrics(os.path.join(d3, "ts_before_metrics.json"), 0, 1800, 0, 10)
-write_metrics(os.path.join(d4, "ts_after_metrics.json"), 0, 1800, 0, 1700)
-rc = subprocess.run([sys.executable, "analyze.py",
-                     os.path.join(d3, "ts_before.jsonl"),
-                     os.path.join(d4, "ts_after.jsonl")],
-                    capture_output=True, text=True)
-check("identical prompts across windows -> INCONCLUSIVE (not VERIFIED)",
-      rc.returncode == 2 and "timestamp-move" in rc.stdout)
+
+def run_pair(rows_b, rows_a, qb=1800, hb=10, qa=1800, ha=1700):
+    d3, d4 = os.path.join(T, "vx"), os.path.join(T, "vy")
+    os.makedirs(d3, exist_ok=True); os.makedirs(d4, exist_ok=True)
+    for d, v, rows in ((d3, "ts_before", rows_b), (d4, "ts_after", rows_a)):
+        with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
+            for r in rows: fh.write(json.dumps(r) + "\n")
+    write_metrics(os.path.join(d3, "ts_before_metrics.json"), 0, qb, 0, hb)
+    write_metrics(os.path.join(d4, "ts_after_metrics.json"), 0, qa, 0, ha)
+    return subprocess.run([sys.executable, "analyze.py",
+                           os.path.join(d3, "ts_before.jsonl"),
+                           os.path.join(d4, "ts_after.jsonl")],
+                          capture_output=True, text=True)
+
+# truly identical prompts (same layout both files) -> INCONCLUSIVE
+rc = run_pair(paired_rows("ts_before", 18, 100, layout="identical"),
+              paired_rows("ts_after", 18, 100, layout="identical"))
+check("truly identical prompts -> INCONCLUSIVE", rc.returncode == 2 and "identical" in rc.stdout)
+
+# no timestamp field at all -> INCONCLUSIVE
+rc = run_pair(paired_rows("ts_before", 18, 100, layout="nofield"),
+              paired_rows("ts_after", 18, 100, layout="nofield"))
+check("no timestamp field -> INCONCLUSIVE", rc.returncode == 2)
+
+# altered timestamp value between variants -> INCONCLUSIVE
+rc = run_pair(paired_rows("ts_before", 18, 100),
+              paired_rows("ts_after", 18, 100, tstamp="2020-01-01T00:00:00+05:30"))
+check("altered timestamp value -> INCONCLUSIVE", rc.returncode == 2 and "timestamp value differs" in rc.stdout)
+
+# valid move -> OBSERVED INCREASE rc 0
+rc = run_pair(paired_rows("ts_before", 18, 100), paired_rows("ts_after", 18, 100))
+check("valid timestamp move -> OBSERVED INCREASE", rc.returncode == 0 and "OBSERVED INCREASE" in rc.stdout)
 
 # 9b. unmatched ids -> INCONCLUSIVE
-for d, v, idp in ((d3, "ts_before", "req-"), (d4, "ts_after", "other-")):
-    with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
-        for r in paired_rows(v, 18, 100, idprefix=idp): fh.write(json.dumps(r) + "\n")
-rc = subprocess.run([sys.executable, "analyze.py",
-                     os.path.join(d3, "ts_before.jsonl"),
-                     os.path.join(d4, "ts_after.jsonl")],
-                    capture_output=True, text=True)
+rc = run_pair(paired_rows("ts_before", 18, 100, idprefix="req-"),
+              paired_rows("ts_after", 18, 100, idprefix="other-"))
 check("unmatched request ids -> INCONCLUSIVE", rc.returncode == 2 and "ids" in rc.stdout)
 
 # 9c. captured usage sum != engine queried -> INCONCLUSIVE
-for d, v in ((d3, "ts_before"), (d4, "ts_after")):
-    with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
-        for r in paired_rows(v, 18, 100): fh.write(json.dumps(r) + "\n")
-write_metrics(os.path.join(d3, "ts_before_metrics.json"), 0, 1000, 0, 10)  # says 1000, captured 1800
-write_metrics(os.path.join(d4, "ts_after_metrics.json"), 0, 1800, 0, 1700)
-rc = subprocess.run([sys.executable, "analyze.py",
-                     os.path.join(d3, "ts_before.jsonl"),
-                     os.path.join(d4, "ts_after.jsonl")],
-                    capture_output=True, text=True)
+rc = run_pair(paired_rows("ts_before", 18, 100), paired_rows("ts_after", 18, 100),
+              qb=1000)
 check("usage/counter mismatch -> INCONCLUSIVE", rc.returncode == 2 and "captured usage" in rc.stdout)
 
 # 9d. different models between windows -> INCONCLUSIVE
+d3, d4 = os.path.join(T, "vz"), os.path.join(T, "vw")
+os.makedirs(d3, exist_ok=True); os.makedirs(d4, exist_ok=True)
+for d, v in ((d3, "ts_before"), (d4, "ts_after")):
+    with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
+        for r in paired_rows(v, 18, 100): fh.write(json.dumps(r) + "\n")
 write_metrics(os.path.join(d3, "ts_before_metrics.json"), 0, 1800, 0, 10)
 write_metrics(os.path.join(d4, "ts_after_metrics.json"), 0, 1800, 0, 1700,
               key='{engine="0",model_name="other-model"}')

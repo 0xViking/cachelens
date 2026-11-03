@@ -10,7 +10,7 @@ against **Muse Glimmer 30B** (Meta open weights, Apache 2.0) served with
 vLLM on a single GPU.
 
 ## The demo story (verified on Muse Glimmer 30B, Nov 3 2026)
-1. An agent workload (18 dispatcher requests sharing a 25.6KB runbook prefix)
+1. An agent workload (18 dispatcher requests sharing a 25.5KB runbook prefix)
    is probed against vLLM - `probe.py --variant ts_before`.
 2. CacheLens diffs all captured prompts and pinpoints the cause: a per-request
    timestamp at char 28, BEFORE the shared prefix - `analyze.py`.

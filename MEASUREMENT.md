@@ -17,13 +17,11 @@
 ## Run order and cache state
 - Single server session in one Modal container. ts_before probed FIRST on a
   fresh server (prefix_cache_hits_total = 0 at its "before" snapshot), then
-  ts_after on the SAME server with NO cache reset. Cache CONTENT persists
-  across the two variants; ts_after could in principle reuse blocks cached
-  during ts_before, since both variants share the same runbook text (placed
-  differently). This does not explain the difference: ts_before had the same
-  warm-cache opportunity (its own requests populated those prefix blocks
-  after request 1) and still hit only 1.0%, because its per-request
-  timestamp precedes the prefix and blocks matching for every request.
+  ts_after on the SAME server with NO cache reset. Counter deltas exclude
+  earlier increments, not cache contents: ts_after could in principle reuse
+  blocks cached during ts_before. Because the two variants' leading prompt
+  content differs, cross-variant reuse is limited to any common rendered/
+  token header; we did not measure its exact contribution.
 - Metric windows: probe.py snapshots /metrics immediately BEFORE request 1 and
   immediately AFTER the last request of each variant. All reported numbers are
   per-window counter DELTAS (counter increments within each window), which
