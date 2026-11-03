@@ -30,7 +30,7 @@ S.append(scene([
  ("Agent workloads resend the same long system prompt every request.", FG, False),
  ("A per-request timestamp placed BEFORE the shared prefix breaks", FG, False),
  ("prefix caching (prompts here: 25,640 chars / 5,796 tokens each):", FG, False),
- ("  [request_time] + system prompt + task  ->  cache misses", RED, True)],[],10,"v3_s1.png"))
+ ("  [request_time] + system prompt + task  ->  cache misses", RED, True)],[],10,"v4b_s1.png"))
 # 2. Broken variant: real command + real counters (14s)
 S.append(scene([
  ("$ python3 probe.py --variant ts_before --out evidence/ts_before.jsonl", DIM, True),
@@ -41,7 +41,7 @@ S.append(scene([
  ("ENGINE /metrics DELTA over the run:", FG, False),
  ("prefix-cache hits +1,088 of +104,328 queried  =  1.0% hit rate", RED, True),
  ("Muse Glimmer 30B, official muse-glimmer vLLM image, one A100-80GB", DIM, True)],
- ["Broken layout: 1.0% prefix-cache hit rate.", "Only 1,088 of 104,328 prompt tokens reused."],14,"v3_s2.png"))
+ ["Broken layout: 1.0% prefix-cache hit rate.", "Only 1,088 of 104,328 prompt tokens reused."],14,"v4b_s2.png"))
 # 3. Analyzer output (10s)
 S.append(scene([
  ("$ python3 analyze.py evidence/ts_before.jsonl evidence/ts_after.jsonl", DIM, True),
@@ -51,7 +51,7 @@ S.append(scene([
  ("verdict: per-request value near the START of the prompt;", FG, True),
  ("prefix-cache reuse needs a byte-identical LEADING prefix", FG, True),
  ("diagnosis computed from the captured prompts themselves", DIM, True)],
- ["CacheLens finds where the shared prefix breaks,", "measured from the actual captured prompts."],10,"v3_s3.png"))
+ ["CacheLens finds where the shared prefix breaks,", "measured from the actual captured prompts."],10,"v4b_s3.png"))
 # 4. The fix: real layouts both variants (10s)
 S.append(scene([
  ("The fix: move the per-request field AFTER the shared prefix.", FG, False),
@@ -60,7 +60,7 @@ S.append(scene([
  ("ts_after:   system prompt + [request_time] + task", GREEN, True),
  ("", FG, False),
  ("Identical content - only the ordering changes.", FG, False)],
- ["Same workload, same model, same server - re-probe as ts_after."],10,"v3_s4.png"))
+ ["Same workload, same model, same server - re-probe as ts_after."],10,"v4b_s4.png"))
 # 5. Engine counter result: real numbers (14s)
 S.append(scene([
  ("$ python3 probe.py --variant ts_after --out evidence/ts_after.jsonl", DIM, True),
@@ -71,7 +71,7 @@ S.append(scene([
  ("single run per variant, no TTFT)", GREEN, True),
  ("OBSERVED INCREASE in prefix-cache hit rate.", FG, True),
  ("This measurement does not prove a fix.", DIM, True)],
- ["93.6% hit rate from engine counter deltas,", "identical prompt volume both runs (104,328 tokens)."],14,"v3_s5.png"))
+ ["93.6% hit rate from engine counter deltas,", "identical prompt volume both runs (104,328 tokens)."],14,"v4b_s5.png"))
 # 6. Honest limits + close (12s)
 S.append(scene([
  ("Honest limits of this evidence:", YEL, False),
@@ -80,10 +80,24 @@ S.append(scene([
  ("  cached=None = metric not populated by this build, not zero caching", FG, True),
  ("", FG, False),
  ("CacheLens: find where your prompts break prefix caching.", CYAN, False),
- ("Built for the Meta AI Developer Hackathon (Muse track).", FG, False)],[],12,"v3_s6.png",mfs=24))
-with open("concat3.txt","w") as f:
+ ("Built for the Meta AI Developer Hackathon (Muse track).", FG, False)],[],12,"v4b_s6.png",mfs=24))
+
+S.append(scene([
+ ("Provenance", YEL, False),
+ ("", FG, False),
+ ("Before the building period (Oct 26):", FG, False),
+ ("  idea + a separate SmolLM2 prototype (not in this repo)", DIM, True),
+ ("", FG, False),
+ ("Built for this repo (Nov 3):", FG, False),
+ ("  new code, Muse Glimmer 30B runs, all evidence shown", GREEN, True),
+ ("", FG, False),
+ ("Comparison of recoverable old source found no substantive", DIM, False),
+ ("shared code; missing old edits cannot be excluded.", DIM, False)],[],12,"v4_s7.png",mfs=26))
+# put provenance before the closing scene
+S=S[:-2]+[S[-1],S[-2]] if False else S
+with open("concat.txt","w") as f:
     f.write("ffconcat version 1.0\n")
-    for name,dur in S:
-        f.write(f"file '{name}'\nduration {dur}\n")
-    f.write(f"file '{S[-1][0]}'\n")
-print("total", sum(d for _,d in S))
+    order=S[:5]+[S[6],S[5]]
+    for name,dur in order: f.write(f"file '{name}'\nduration {dur}\n")
+    f.write(f"file '{order[-1][0]}'\n")
+print(sum(d for _,d in order))

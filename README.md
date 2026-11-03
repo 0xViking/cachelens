@@ -63,3 +63,16 @@ modal volume get cachelens-evidence <run-id>/ts_before_metrics.json evidence/ts_
 modal volume get cachelens-evidence <run-id>/ts_after_metrics.json  evidence/ts_after_metrics.json
 python3 analyze.py evidence/ts_before.jsonl evidence/ts_after.jsonl
 ```
+
+## Provenance and what is new
+
+- Before the building period (Oct 26, 2026, kickoff day, ahead of Oct 27 - Nov 4): project idea selection and a separate private
+  prototype tested on SmolLM2-135M (vLLM 0.11.0, Modal T4). That prototype is not part of this repository. It showed that
+  per-request cached-token fields can be null while engine /metrics still count prefix-cache hits.
+- This repository's current implementation was created on Nov 3, 2026: workload.py, probe.py, analyze.py, modal_serve.py,
+  tests, and the evidence in evidence/, captured by serving Meta Muse Glimmer 30B (official muse-glimmer vLLM image) on a
+  Modal A100-80GB. Every number in evidence/ comes from that Nov 3 run.
+- Comparison of the recoverable Oct 26 prototype source against the current code found no substantive shared code. The
+  comparison covers only the old files that could be recovered, so missing old edits cannot be excluded. The carried-over
+  idea is to treat engine counters as the measurement of record.
+- This is a disclosure, not a claim about how judges will treat eligibility.
