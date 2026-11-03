@@ -615,5 +615,10 @@ check("mixed real log + fixture smi: MIXED INPUTS banner names the fixture, not 
 _rc = subprocess.run([sys.executable, "cachelens.py", "--log", "examples/env/vllm_prefix_off.log", "--smi-file", "examples/env/smi_h100.csv", "--out", "/tmp/r_smi3"], capture_output=True, text=True)
 check("all-fixture inputs stay SYNTHETIC EXAMPLE", "SYNTHETIC EXAMPLE</h1>" in open("/tmp/r_smi3/report.html").read())
 
+_rj = json.load(open("/tmp/r_smi/report.json"))
+check("fixture smi next to real log: cross-check skipped, no 'consistent' claim",
+      not any("consistent with the log" in o["observation"] for o in _rj["sections"]["environment"]["observations"])
+      and any("cross-check skipped" in o["observation"] for o in _rj["sections"]["environment"]["observations"]))
+
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

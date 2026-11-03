@@ -51,6 +51,11 @@ def build(args):
             lt, m1, args.mean_prompt_tokens, False, metrics_later_text=m2, smi_text=st)
         if args.smi_file and os.path.basename(args.smi_file) in out["fixture_inputs"] and "gpu_hardware" in out["sections"]["environment"]["sources"]:
             out["sections"]["environment"]["sources"]["gpu_hardware"] = "FIXTURE (made up): " + out["sections"]["environment"]["sources"]["gpu_hardware"]
+            if mixed and args.log and os.path.basename(args.log) not in out["fixture_inputs"]:
+                _e = out["sections"]["environment"]
+                _e["observations"] = [o for o in _e["observations"] if "nvidia-smi" not in o["observation"]]
+                _e["observations"].append({"observation": "nvidia-smi cross-check skipped: the smi file is a made-up fixture",
+                    "evidence": "fixture smi file next to a real log", "note": "not evidence about the log's host"})
     if args.pair_before or args.pair_after:
         if not (args.pair_before and args.pair_after):
             raise prompt_diag.BadInput("--pair-before and --pair-after must be given together")
