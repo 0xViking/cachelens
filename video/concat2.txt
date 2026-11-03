@@ -1,6 +1,8 @@
 ffconcat version 1.0
 file 'w1.png'
-duration 10
+duration 12
+file 'w1b.png'
+duration 18
 file 'w2.png'
 duration 12
 file 'w3.png'

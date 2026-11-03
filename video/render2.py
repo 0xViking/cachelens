@@ -34,14 +34,32 @@ def frame(name, source, srccol, cap, img=None, lines=None, crop=None, mfs=24):
 S=[]
 REAL=("REAL captured evidence + real report render",GREEN)
 S.append((frame("w1.png","Meta Global AI Developer Hackathon - Muse Glimmer 30B",YEL,
- ["Find why your prefix cache is not hitting."],
- lines=[("CacheLens",CYAN,True),("A diagnostic report for prefix-cache problems on vLLM",FG,False),("",FG,False),
- ("The problem",YEL,False),("Agents resend the same long system prompt every request.",FG,False),
- ("One per-request value near the START of the prompt breaks the reuse:",FG,False),
- ("[request_time] + system prompt + task   ->   cache misses",RED,True)]),10))
+ ["I'm Praneeth, a backend engineer learning","inference engineering by building with it."],
+ lines=[("CacheLens",CYAN,True),("A visual report for prefix-cache problems on vLLM",FG,False),("",FG,False),
+ ("Prefix caching lets a serving engine reuse work for the start of a prompt.",FG,False),
+ ("Why it hits or misses is hard to see.",FG,False)]),12))
+def w1b():
+    im=Image.new("RGB",(W,H),BG); d=ImageDraw.Draw(im)
+    d.rectangle([0,0,W,64],fill=(22,27,34)); d.text((32,10),"CACHELENS",font=F(SANS_B,20),fill=CYAN)
+    d.text((32,36),"The problem: the evidence lives in three separate places",font=F(SANS_B,17),fill=YEL)
+    boxes=[("1. Prompt text","what the prompts really look like",(37,99,235)),("2. Server settings","version, caching on/off, memory",(124,58,237)),("3. Engine metrics","what the engine counted",(5,150,105))]
+    x=50
+    for t,sub,col in boxes:
+        d.rounded_rectangle([x,120,x+360,300],radius=16,fill=(22,27,34),outline=col,width=4)
+        d.text((x+22,150),t,font=F(SANS_B,28),fill=FG); d.text((x+22,205),sub,font=F(SANS,20),fill=DIM)
+        x+=410
+    d.text((50,340),"Each one alone says little. Low hit rate? You end up guessing.",font=F(SANS_B,30),fill=RED)
+    d.text((50,420),"CacheLens puts all three in ONE report, and labels each part:",font=F(SANS,28),fill=FG)
+    lab=[("TEXT-LEVEL",(37,99,235),"read from your prompts"),("PARSED SETTINGS",(124,58,237),"read from a log file"),("MEASURED",(5,150,105),"counted by the engine")]
+    y=480
+    for t,col,sub in lab:
+        d.rounded_rectangle([50,y,300,y+38],radius=19,fill=col); d.text((66,y+7),t,font=F(SANS_B,20),fill=(255,255,255)); d.text((320,y+6),sub,font=F(SANS,24),fill=FG); y+=50
+    d.rectangle([0,H-62,W,H],fill=(22,27,34)); d.text((32,H-50),"Evidence instead of guessing.",font=F(SANS_B,28),fill=FG)
+    im.save("w1b.png"); return "w1b.png"
+S.append((w1b(),18))
 S.append((frame("w2.png","MEASURED on a real Muse Glimmer 30B engine (captured Nov 3)",GREEN,
  ["Broken layout: 1.0% prefix-cache hit rate.","1,088 of 104,328 prompt tokens reused."],
- lines=[("ts_before: timestamp first, 18 requests x 5,796 tokens",FG,True),("",FG,False),
+ lines=[("Example: a timestamp at the START of every prompt",YEL,False),("[request_time] + system prompt + task",RED,True),("",FG,False),("ts_before: 18 requests x 5,796 tokens",FG,True),("",FG,False),
  ("engine counter delta:",DIM,True),("prefix-cache hits +1,088 of +104,328 queried",RED,True),("= 1.0% hit rate",RED,True),("",FG,False),
  ("Measured synthetic workload on a real engine.",DIM,False)]),12))
 S.append((frame("w3.png","SYNTHETIC EXAMPLE - the report on your own prompts file",PURP,
