@@ -29,9 +29,12 @@ CLASS_STYLE = {
 def build(args):
     paths = [x for x in (args.prompts, args.log, args.metrics, args.metrics_later,
                          args.pair_before, args.pair_after, args.smi_file) if x]
-    synth = args.synthetic or any("examples" in os.path.normpath(os.path.abspath(x)).split(os.sep) for x in paths)
+    fix = [x for x in paths if "examples" in os.path.normpath(os.path.abspath(x)).split(os.sep)]
+    synth = args.synthetic or bool(fix)
+    mixed = bool(fix) and len(fix) < len(paths) and not args.synthetic
     out = {"redacted_examples": not args.show_examples, "sections": {},
-           "synthetic": bool(synth),
+           "synthetic": bool(synth) and not mixed, "mixed_inputs": mixed,
+           "fixture_inputs": [os.path.basename(x) for x in fix],
            "input_provenance": ("NOT VERIFIED: CacheLens cannot tell whether the prompts file, log, "
                                 "metrics and measured pair describe the same server or traffic")}
     prompts = None
@@ -46,6 +49,8 @@ def build(args):
         st = open(args.smi_file, encoding="utf-8").read() if args.smi_file else None
         out["sections"]["environment"] = env_report.report(
             lt, m1, args.mean_prompt_tokens, False, metrics_later_text=m2, smi_text=st)
+        if args.smi_file and os.path.basename(args.smi_file) in out["fixture_inputs"] and "gpu_hardware" in out["sections"]["environment"]["sources"]:
+            out["sections"]["environment"]["sources"]["gpu_hardware"] = "FIXTURE (made up): " + out["sections"]["environment"]["sources"]["gpu_hardware"]
     if args.pair_before or args.pair_after:
         if not (args.pair_before and args.pair_after):
             raise prompt_diag.BadInput("--pair-before and --pair-after must be given together")
@@ -171,7 +176,7 @@ def render(res):
          'tr:first-child:has(th){display:none}tr{border:1px solid #e5e7eb;border-radius:8px;margin:8px 0;padding:4px 8px}'
          'td{border:none;padding:4px 0}td[data-l]:before{content:attr(data-l);display:block;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em}}'
          '</style></head><body><main>',
-         '<h1>CacheLens report' + (' - SYNTHETIC EXAMPLE' if res.get('synthetic') else '') + '</h1><div class="sub">Why is my prefix cache not hitting? Three evidence classes, kept separate: ',
+         '<h1>CacheLens report' + (' - SYNTHETIC EXAMPLE' if res.get('synthetic') else (' - MIXED INPUTS' if res.get('mixed_inputs') else '')) + '</h1><div class="sub">Why is my prefix cache not hitting? Three evidence classes, kept separate: ',
          badge("TEXT-LEVEL"), " ", badge("PARSED SETTINGS"), " ", badge("MEASURED"), '</div>']
     # 1 prompt layout
     h.append('<div class="card"><h2>1. Prompt layout %s</h2>' % badge("TEXT-LEVEL"))
@@ -195,6 +200,11 @@ def render(res):
     else:
         h.append('<p class="na">Not provided (no --prompts file): <span class="unk">unknown</span></p>')
     h.append('</div>')
+    if res.get("mixed_inputs"):
+        h.insert(8, '<div class="card" style="border-left:6px solid #7c3aed"><b>MIXED INPUTS.</b> These files are '
+                    'MADE-UP FIXTURES from examples/: <b>%s</b>. Every other input is as you supplied it. '
+                    'Fixture values do not describe the real system; do not read them together.</div>'
+                    % E(", ".join(res["fixture_inputs"])))
     if res.get("synthetic"):
         h.insert(8, '<div class="card" style="border-left:6px solid #7c3aed"><b>SYNTHETIC EXAMPLE DATA.</b> '
                     'These numbers come from made-up demo inputs, not from a real system.</div>')

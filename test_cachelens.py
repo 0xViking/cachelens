@@ -586,8 +586,8 @@ check("smi file consistent with log device memory (79.27 vs 79.65 GiB) says cons
 check("smi supplied removes GPU-name unknown",
       not any("GPU model name" in u for u in _r["unknowns"]))
 _r = env_report.report(_lg, None, None, False, smi_text=open("examples/env/smi_a10.csv").read())
-check("smi memory mismatching the log warns different machines",
-      any("WARNING: nvidia-smi" in o["observation"] for o in _r["observations"]))
+check("smi memory mismatch warns, hedged: verify host and device mapping, no definitive different-machine claim",
+      any("WARNING: nvidia-smi" in o["observation"] and "verify the host and device mapping" in o["note"] and "probably" not in o["note"] for o in _r["observations"]))
 for _bad in ("", "garbage", "0, name, 80000", "x, n, 80000, 1, 5", "0, n, -5, 1, 5", "0, n, 100, 500, 5"):
     try:
         env_report.report(_lg, None, None, False, smi_text=_bad)
@@ -608,6 +608,12 @@ _rc = subprocess.run([sys.executable, "cachelens.py", "--log", "evidence/vllm.lo
 check("cachelens report with --smi-file shows GPU row", _rc.returncode == 0 and "H100" in open("/tmp/r_smi/report.html").read())
 _rc = subprocess.run([sys.executable, "cachelens.py", "--log", "evidence/vllm.log", "--smi-file", "/nonexistent", "--out", "/tmp/r_smi2"], capture_output=True, text=True)
 check("cachelens missing smi file fails rc!=0 w/o traceback", _rc.returncode != 0 and "Traceback" not in _rc.stderr)
+
+_h = open("/tmp/r_smi/report.html").read()
+check("mixed real log + fixture smi: MIXED INPUTS banner names the fixture, not blanket SYNTHETIC title",
+      "MIXED INPUTS" in _h and "smi_h100.csv" in _h and "SYNTHETIC EXAMPLE</h1>" not in _h and "FIXTURE (made up)" in _h)
+_rc = subprocess.run([sys.executable, "cachelens.py", "--log", "examples/env/vllm_prefix_off.log", "--smi-file", "examples/env/smi_h100.csv", "--out", "/tmp/r_smi3"], capture_output=True, text=True)
+check("all-fixture inputs stay SYNTHETIC EXAMPLE", "SYNTHETIC EXAMPLE</h1>" in open("/tmp/r_smi3/report.html").read())
 
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

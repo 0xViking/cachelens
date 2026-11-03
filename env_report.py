@@ -351,9 +351,9 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
                         "evidence": "smi totals %s GiB vs log device total" % ", ".join("%.2f" % t for t in tots),
                         "note": "consistent with, not proof of, the same host"})
         else:
-            obs.append({"observation": "WARNING: nvidia-smi GPU memory does not match the log's device memory",
+            obs.append({"observation": "WARNING: nvidia-smi GPU memory does not match the log's device memory (not identity proof either way)",
                         "evidence": "smi totals %s GiB vs log %.2f GiB" % (", ".join("%.2f" % t for t in tots), log_gib),
-                        "note": "the smi output and the log probably come from different machines; do not combine them"})
+                        "note": "may be different machines, or a different GPU index, tensor-parallel/MIG slice or container memory limit; verify the host and device mapping before combining them"})
     elif smi_gpus and log_text is not None:
         obs.append({"observation": "nvidia-smi output cannot be cross-checked with this log (no device memory line)",
                     "evidence": "log has no 'Free memory on device' line",
