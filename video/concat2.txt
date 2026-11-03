@@ -1,0 +1,14 @@
+ffconcat version 1.0
+file 'v2_s1.png'
+duration 10
+file 'v2_s2.png'
+duration 14
+file 'v2_s3.png'
+duration 10
+file 'v2_s4.png'
+duration 10
+file 'v2_s5.png'
+duration 14
+file 'v2_s6.png'
+duration 12
+file 'v2_s6.png'

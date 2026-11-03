@@ -8,8 +8,11 @@ from workload import build_requests
 
 T = tempfile.mkdtemp(prefix="cachelens-test-")
 fails = []
+total = 0
 
 def check(name, cond):
+    global total
+    total += 1
     print(("PASS " if cond else "FAIL ") + name)
     if not cond:
         fails.append(name)
@@ -181,6 +184,5 @@ f = analyze.diagnose([{"prompt": "abc", "prompt_tokens": 1, "cached_tokens": Non
 check("strict-prefix inputs (ab/abc) handled, common prefix 2", f["diverges_at_char"] == 2)
 
 print()
-n = sum(1 for line in open(__file__).read().splitlines() if line.strip().startswith("check("))
-print(f"{n} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
+print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)
