@@ -34,6 +34,10 @@ def metrics_delta(path):
         m = json.load(open(path))
     except FileNotFoundError:
         raise InvalidEvidence(f"metrics file not found: {path}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise InvalidEvidence(f"metrics file is not valid JSON: {path}")
+    if not isinstance(m, dict) or not isinstance(m.get("before"), dict) or not isinstance(m.get("after"), dict):
+        raise InvalidEvidence(f"metrics file has no before/after snapshots: {path}")
     if "error" in m.get("before", {}) or "error" in m.get("after", {}):
         raise InvalidEvidence(f"metrics snapshot unavailable in {path}: "
                               f"{m['before'].get('error') or m['after'].get('error')}")
@@ -133,6 +137,10 @@ def main():
     if len(sys.argv) != 3:
         print("usage: analyze.py before.jsonl after.jsonl   (measured Glimmer pair)\n"
               "       analyze.py --prompts prompts.jsonl [--no-examples]   (text-level prompt diagnostic)")
+        return 2
+    if not (sys.argv[1].endswith(".jsonl") and sys.argv[2].endswith(".jsonl")):
+        print("INCONCLUSIVE - evidence files must be named *.jsonl "
+              "(their metrics are read from the matching *_metrics.json)")
         return 2
     before, after = load(sys.argv[1]), load(sys.argv[2])
     # Fail closed on structural problems before printing any numbers.

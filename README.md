@@ -128,13 +128,15 @@ valid counter window both exist, and says "consistent with", never "caused by".
 - Any unusable input (bad file, bad JSON, non-UTF-8, an inconclusive measured pair) exits 2 with
   `INCONCLUSIVE`. If every requested cache window is unusable the report still renders, with a
   visible INCONCLUSIVE banner and no hit rate.
-- Provenance: CacheLens cannot know that your prompts file, log and metrics describe the same
-  server. Without `--same-system` (your assertion) the report adds a "NOT LINKED" row and makes no
-  cross-reading; with it, one hedged "consistent with, not proof of" row. If the log says prefix
-  caching is off but the counters show hits, it flags CONFLICTING EVIDENCE instead.
+- Provenance: CacheLens cannot know that your prompts file, log, metrics and measured pair describe
+  the same server or traffic. The report says so, makes no cross-section cause claim, and
+  `report.json` carries `input_provenance: NOT VERIFIED`. If the log says prefix caching is off
+  but the counters show hits, it flags INPUTS DISAGREE instead.
 - Inputs under an `examples/` folder, or `--synthetic`, get a "SYNTHETIC EXAMPLE DATA" banner.
-- The measured section is the existing validated pair (single synthetic serial run); it only
-  applies to the timestamp-move experiment shipped here, not to arbitrary prompts.
+- The measured section is the preset validated pair (the shipped timestamp-move experiment), not
+  a measurement of arbitrary prompts. Same server instance / no restart between the two runs is
+  NOT verified by the tool; matching metric labels can repeat across restarts.
+- On narrow screens (<600px) tables turn into labeled cards and the chart scrolls sideways.
 - `analyze.py --prompts ... --no-examples` accepts the flag in any position. The plain CLI prints
   prompt fragments by default (see the privacy note above); `cachelens.py` redacts by default.
 - `--with-nvidia-smi` (env_report.py) is a fixed command with a timeout and no shell; it has NOT

@@ -261,7 +261,7 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
     if isinstance(facts.get("gpu_kv_cache_tokens"), int) and mean_prompt_tokens:
         ratio = facts["gpu_kv_cache_tokens"] / mean_prompt_tokens
         obs.append({"observation": "KV cache holds about %.1f mean-size prompts' worth of tokens" % ratio,
-                    "evidence": "GPU KV cache size %d tokens vs mean prompt %s tokens (observed / given)"
+                    "evidence": "GPU KV cache size %d tokens (from the log) vs mean prompt %s tokens (a number YOU supplied, not measured)"
                                 % (facts["gpu_kv_cache_tokens"], mean_prompt_tokens),
                     "note": "a small ratio means new prompts evict old prefixes quickly; "
                             "block granularity and concurrency also matter"})

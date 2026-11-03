@@ -523,28 +523,54 @@ ex_args = ["--prompts", "examples/user_id_midprompt.jsonl", "--log", "examples/e
 o5 = os.path.join(T, "rep_conflict"); r = cl(ex_args + ["--out", o5])
 h5 = open(os.path.join(o5, "report.html")).read()
 j5 = json.load(open(os.path.join(o5, "report.json")))
-check("report: cache-off log + hits window -> CONFLICTING EVIDENCE, no combined layout-cause row",
-      "CONFLICTING EVIDENCE" in h5 and "Early layout break AND" not in h5)
+check("report: cache-off log + hits window -> INPUTS DISAGREE flag, no cross-section cause row",
+      "INPUTS DISAGREE" in h5 and "Early layout break AND" not in h5 and "COMBINED" not in h5)
 check("report: examples/ inputs are labeled SYNTHETIC EXAMPLE DATA and flagged in JSON",
       "SYNTHETIC EXAMPLE DATA" in h5 and j5["synthetic"] is True)
 # real-evidence run is not labeled synthetic; measured caveat names same-server/no cache clear
-check("report: real evidence run not labeled synthetic; measured caveat states same server, no cache clear",
-      "SYNTHETIC EXAMPLE DATA" not in html3 and "no cache-clearing step" in html3 and "same engine/model metric series" in html3)
+check("report: real evidence run not labeled synthetic; measured caveat says same-instance NOT verified, next to numbers",
+      "SYNTHETIC EXAMPLE DATA" not in html3 and "Not verified here:" in html3 and "can repeat across restarts" in html3
+      and html3.index("Not verified here:") < html3.index("Tokens queried") and "18 and 18 requests" in html3)
 # legends: not 'reusable across requests'; explicit ALL prompts + measurement caveat
 check("report legend: shared by ALL prompts, character-level, needs measurement",
       "shared by ALL" in html3 and "needs measurement" in html3 and "not reusable across these requests" not in html3)
-# no assumed link: early break + ok window without --same-system -> NOT LINKED row, no combined claim
-ok_log = None
+# no causal cross-section row ever; inputs-not-verified note present when several sections
 mA = os.path.join(T, "mm1.txt"); mB = os.path.join(T, "mm2.txt")
 open(mA, "w").write(mtxt(1000, 100)); open(mB, "w").write(mtxt(2000, 150))
 o6 = os.path.join(T, "rep_nolink"); cl(["--prompts", secret, "--metrics", mA, "--metrics-later", mB, "--out", o6])
 h6 = open(os.path.join(o6, "report.html")).read()
-check("report: separate prompt file + counters without provenance -> NOT LINKED, no cross-reading",
-      "NOT LINKED" in h6 and "Early layout break AND" not in h6)
-o7 = os.path.join(T, "rep_link"); cl(["--prompts", secret, "--metrics", mA, "--metrics-later", mB, "--same-system", "--out", o7])
-h7 = open(os.path.join(o7, "report.html")).read()
-check("report: --same-system allows the hedged combined row, labeled user-asserted",
-      "you asserted" in h7 and "not proof of" in h7 and "NOT LINKED" not in h7)
+check("report: prompt file + counters -> 'not verified same server' note, no cross-reading row",
+      "Inputs are not verified to describe the same server or traffic" in h6 and "Early layout break AND" not in h6
+      and "COMBINED" not in h6)
+r = cl(["--prompts", secret, "--same-system", "--out", os.path.join(T, "x")])
+check("report: --same-system flag no longer exists", r.returncode != 0)
+j6 = json.load(open(os.path.join(o6, "report.json")))
+check("report JSON carries input_provenance NOT VERIFIED", "NOT VERIFIED" in j6["input_provenance"])
+# F2: pair files without .jsonl suffix -> INCONCLUSIVE rc 2, no traceback (both tools)
+nojl = os.path.join(T, "pair_nosuffix"); open(nojl, "w").write("{}\n")
+r = cl(["--pair-before", nojl, "--pair-after", nojl])
+check("cachelens non-.jsonl pair -> INCONCLUSIVE rc=2 no traceback", r.returncode == 2 and "Traceback" not in r.stderr)
+r = subprocess.run([sys.executable, "analyze.py", nojl, nojl], capture_output=True, text=True)
+check("analyze.py non-.jsonl pair -> INCONCLUSIVE rc=2 no traceback", r.returncode == 2 and "Traceback" not in r.stderr)
+# corrupt metrics JSON next to a valid .jsonl pair
+dbad = os.path.join(T, "badmetrics"); os.makedirs(dbad)
+for v in ("ts_before", "ts_after"):
+    with open(os.path.join(dbad, v + ".jsonl"), "w") as fh:
+        for rr in fake_rows(v, 2, 10): fh.write(json.dumps(rr) + "\n")
+    open(os.path.join(dbad, v + "_metrics.json"), "w").write("{not json")
+r = cl(["--pair-before", os.path.join(dbad, "ts_before.jsonl"), "--pair-after", os.path.join(dbad, "ts_after.jsonl")])
+check("cachelens corrupt pair metrics JSON -> INCONCLUSIVE rc=2 no traceback", r.returncode == 2 and "Traceback" not in r.stderr)
+r = subprocess.run([sys.executable, "analyze.py", os.path.join(dbad, "ts_before.jsonl"), os.path.join(dbad, "ts_after.jsonl")], capture_output=True, text=True)
+check("analyze.py corrupt metrics JSON -> INCONCLUSIVE rc=2 no traceback", r.returncode == 2 and "Traceback" not in r.stderr)
+# responsive + legible chart markup present
+check("report HTML has <600px stacked-card CSS and a scrollable fixed-min-width chart",
+      "@media(max-width:600px)" in html3 and "data-l=" in html3 and 'class="chart"' in html3 and "min-width:640px" in html3)
+# F4/F5/F6 wording
+check("report: pairwise numbers and first-8-of-N shown; stable-text wording precise",
+      "Across prompt PAIRS" in html3 and "first 8 of 18 prompts" in html3 and "appears in every prompt but sits after the first varying line" in html3)
+res = env_report.report(open("evidence/vllm.log", errors="replace").read(), None, 5796, False)
+check("env_report capacity ratio says the mean prompt tokens were user-supplied",
+      any("YOU supplied" in o["evidence"] for o in res["observations"]))
 
 print()
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
