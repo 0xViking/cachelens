@@ -121,13 +121,15 @@ def diagnose(rows):
     return findings
 
 def main():
-    if len(sys.argv) in (3, 4) and sys.argv[1] == "--prompts":
+    if "--prompts" in sys.argv[1:]:
         import prompt_diag
-        redact = len(sys.argv) == 4 and sys.argv[3] == "--no-examples"
-        if len(sys.argv) == 4 and not redact:
+        args = sys.argv[1:]
+        redact = "--no-examples" in args
+        rest = [x for x in args if x != "--no-examples"]
+        if len(rest) != 2 or rest[0] != "--prompts":
             print("usage: analyze.py --prompts prompts.jsonl [--no-examples]")
             return 2
-        return prompt_diag.main(sys.argv[2], redact=redact)
+        return prompt_diag.main(rest[1], redact=redact)
     if len(sys.argv) != 3:
         print("usage: analyze.py before.jsonl after.jsonl   (measured Glimmer pair)\n"
               "       analyze.py --prompts prompts.jsonl [--no-examples]   (text-level prompt diagnostic)")

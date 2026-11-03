@@ -178,8 +178,11 @@ def window_for(mt, mt2):
                                reason="hits grew more than queries in the window (%d > %d): "
                                       "inconsistent counters" % (dh, dq))
                 elif dq == 0:
+                    same = (vals[0] == vals[1] and vals[2] == vals[3])
                     row.update(status="no_traffic", dq=0, dh=int(dh),
-                               reason="no prefix-cache queries between the snapshots")
+                               reason="no prefix-cache queries between the snapshots"
+                                      + (" (the two snapshots are identical: the same file twice, "
+                                         "or a stalled/idle server)" if same else ""))
                 else:
                     row.update(status="ok", dq=int(dq), dh=int(dh),
                                hit_pct=round(100.0 * dh / dq, 1))
@@ -293,7 +296,7 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
                                 "note": "window-based and engine-reported; read it together with the prompt layout"})
                 elif w["status"] == "no_traffic":
                     obs.append({"observation": "no prefix-cache queries between the snapshots for %s" % w["series"],
-                                "evidence": "query counter delta is 0",
+                                "evidence": w["reason"],
                                 "note": "this window carried no traffic; nothing to read"})
                 else:
                     unknowns.append("window for %s: INCONCLUSIVE - %s" % (w["series"], w["reason"]))
@@ -309,6 +312,10 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
         obs.append({"observation": "GPU names come from the machine running this report, the log from a file",
                     "evidence": "--with-nvidia-smi together with --log",
                     "note": "only the same host if you ran this on the serving machine; otherwise ignore the GPU names"})
+    if not obs and mt is not None:
+        obs.append({"observation": "metrics parsed (%d series) but no valid reading is possible" % len(mt),
+                    "evidence": "no usage series and no valid two-snapshot window",
+                    "note": "see unknowns; provide a second snapshot from the same running engine"})
     if not obs:
         obs.append({"observation": "no cache-relevant signal in the provided files",
                     "evidence": "parsed fields are all 'not available' or neutral",
@@ -350,6 +357,11 @@ def main(argv):
                      metrics_later_text=metrics_later)
     except BadInput as e:
         print(f"INCONCLUSIVE - {e}")
+        return 2
+    if res["windows"] and all(w["status"] == "inconclusive" for w in res["windows"]):
+        print("INCONCLUSIVE - every requested window is unusable:")
+        for w in res["windows"]:
+            print("  - %s: %s" % (w["series"], w["reason"]))
         return 2
     print("== CacheLens serving-environment report ==")
     print(json.dumps(res, indent=2))

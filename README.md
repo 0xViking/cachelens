@@ -50,6 +50,7 @@ Cost, auth, data retention:
 - `probe.py` - OpenAI-compatible probing + vLLM /metrics capture
 - `analyze.py` - measured before/after verification + `--prompts` prompt-file diagnostic
 - `prompt_diag.py` - text-level prompt diagnostic used by `analyze.py --prompts`
+- `cachelens.py` - one command: combined visual HTML + JSON report
 - `env_report.py` - serving-environment report from local log/metrics files
 - `examples/` - labeled synthetic inputs for the prompt diagnostic and env report
 - `modal_serve.py` - one-command Muse Glimmer 30B serving on Modal (ephemeral)
@@ -109,6 +110,30 @@ python3 env_report.py --log vllm.log --with-nvidia-smi   # on the serving host o
 - Metadata (settings, memory sizes, GPU names) is context, not a diagnosis of a hardware bottleneck.
 - Privacy: the output includes the model path/name from the log. Labeled synthetic fixtures
   are in `examples/env/`.
+
+## One command, one visual report
+```
+python3 cachelens.py --prompts prompts.jsonl --log vllm.log --metrics snap1.txt --metrics-later snap2.txt \
+    --pair-before evidence/ts_before.jsonl --pair-after evidence/ts_after.jsonl --out my-report
+```
+Writes `my-report/report.html` (self-contained: inline CSS/SVG, no scripts, no external assets)
+and `my-report/report.json`. Every input is optional, but at least one is required; a missing
+section is shown as "unknown", not skipped. The page has a prompt-layout diagram, a server/cache
+table, the measured before/after table and a findings table. Each finding carries its evidence
+class (TEXT-LEVEL, PARSED SETTINGS, MEASURED) and an unknown / next-check column. Classes are
+never merged into one verdict; a "combined check" row appears only when a text-level break and a
+valid counter window both exist, and says "consistent with", never "caused by".
+- **Prompt text is redacted by default** in both HTML and JSON. `--show-examples` adds fragments
+  (HTML-escaped) and a warning banner; do not share that output publicly.
+- Any unusable input (bad file, bad JSON, non-UTF-8, an inconclusive measured pair) exits 2 with
+  `INCONCLUSIVE`. If every requested cache window is unusable the report still renders, with a
+  visible INCONCLUSIVE banner and no hit rate.
+- The measured section is the existing validated pair (single synthetic serial run); it only
+  applies to the timestamp-move experiment shipped here, not to arbitrary prompts.
+- `analyze.py --prompts ... --no-examples` accepts the flag in any position. The plain CLI prints
+  prompt fragments by default (see the privacy note above); `cachelens.py` redacts by default.
+- `--with-nvidia-smi` (env_report.py) is a fixed command with a timeout and no shell; it has NOT
+  been validated against a real GPU host in this repo's tests.
 
 ## Reproduce
 ```

@@ -458,6 +458,65 @@ check("prompt_diag small-n does not claim per-request id", "does not show a per-
 res = prompt_diag.diagnose(["a" * 10 + "\nX" + "q" * 200, "a" * 10 + "\nY" + "q" * 200])
 check("prompt_diag early-variation labeled heuristic", "heuristic" in res)
 
+# 14. reviewer round 2 + combined report (cachelens.py)
+# all windows inconclusive -> rc 2 visible INCONCLUSIVE; no misleading "no signal" observation
+f1 = os.path.join(T, "m_a.txt"); f2 = os.path.join(T, "m_b.txt")
+open(f1, "w").write(mtxt(1000, 100)); open(f2, "w").write(mtxt(100, 10))   # reset
+r = er_main(["--metrics", f1, "--metrics-later", f2])
+check("env_report all windows inconclusive (reset) -> rc=2 INCONCLUSIVE",
+      r.returncode == 2 and "INCONCLUSIVE" in r.stdout and "went down" in r.stdout)
+res = env_report.report(None, mtxt(1000, 100), None, False, metrics_later_text=mtxt(100, 10))
+check("env_report no misleading 'no cache-relevant signal' when counters were parsed",
+      not any("no cache-relevant signal" in o["observation"] for o in res["observations"]))
+# identical snapshots (same file twice) are called out
+res = env_report.report(None, mtxt(5, 1), None, False, metrics_later_text=mtxt(5, 1))
+check("env_report identical snapshots flagged as same file / stalled",
+      "identical" in res["windows"][0]["reason"])
+# --no-examples works in any argument position
+f = pd_write("secret2.jsonl", [{"prompt": "h\nSECRET-A\n" + "z" * 50}, {"prompt": "h\nSECRET-B\n" + "z" * 50}])
+r = subprocess.run([sys.executable, "analyze.py", "--no-examples", "--prompts", f], capture_output=True, text=True)
+check("analyze.py --no-examples before --prompts also redacts", r.returncode == 0 and "SECRET" not in r.stdout)
+
+def cl(args):
+    return subprocess.run([sys.executable, "cachelens.py"] + args, capture_output=True, text=True)
+secret = pd_write("secret3.jsonl", [{"prompt": "h\nSECRET-KEY sk-live-111 <script>alert(1)</script>\n" + "z" * 80},
+                                    {"prompt": "h\nSECRET-KEY sk-live-222 <script>alert(1)</script>\n" + "z" * 80}])
+o1 = os.path.join(T, "rep_default")
+r = cl(["--prompts", secret, "--out", o1])
+html1 = open(os.path.join(o1, "report.html")).read(); json1 = open(os.path.join(o1, "report.json")).read()
+check("cachelens report default: no prompt text in HTML or JSON",
+      r.returncode == 0 and "SECRET" not in html1 and "sk-live" not in html1 and "SECRET" not in json1)
+o2 = os.path.join(T, "rep_show")
+r = cl(["--prompts", secret, "--show-examples", "--out", o2])
+html2 = open(os.path.join(o2, "report.html")).read()
+check("cachelens --show-examples includes fragments, HTML-escaped, with warning",
+      "sk-live-111" in html2 and "<script>alert" not in html2 and "&lt;script&gt;" in html2 and "Do not share" in html2)
+import re as _re
+check("cachelens HTML is self-contained (no external URLs, no scripts)",
+      not _re.findall(r"(?:src|href)=[\"']https?:", html1) and "<script" not in html1 and "<link" not in html1)
+# full real example renders every section with real measured numbers
+o3 = os.path.join(T, "rep_full")
+r = cl(["--prompts", "evidence/ts_before.jsonl", "--log", "evidence/vllm.log",
+        "--pair-before", "evidence/ts_before.jsonl", "--pair-after", "evidence/ts_after.jsonl", "--out", o3])
+html3 = open(os.path.join(o3, "report.html")).read()
+check("cachelens full report: measured 1.0% -> 93.6%, break at char 28, KV 776150",
+      r.returncode == 0 and "93.6%" in html3 and "1088" in html3 and "char 28" in html3 and "776150" in html3)
+# missing sections are visibly unknown
+check("cachelens missing sections show 'unknown'",
+      html1.count("unknown") >= 2 and "Not provided" in html1)
+# fail closed: no input, bad input, half a pair, bad pair
+r = cl([]); check("cachelens no input -> INCONCLUSIVE rc=2", r.returncode == 2)
+r = cl(["--prompts", os.path.join(T, "bad.jsonl")]); check("cachelens bad prompts -> INCONCLUSIVE rc=2", r.returncode == 2 and "Traceback" not in r.stderr)
+r = cl(["--pair-before", "evidence/ts_before.jsonl"]); check("cachelens half a pair -> INCONCLUSIVE rc=2", r.returncode == 2)
+r = cl(["--pair-before", os.path.join(d1, "ts_before.jsonl"), "--pair-after", os.path.join(d2, "ts_after.jsonl")])
+check("cachelens inconclusive measured pair -> rc=2 not a report", r.returncode == 2 and "INCONCLUSIVE" in r.stdout)
+# reset windows: report still renders with visible banner
+o4 = os.path.join(T, "rep_reset")
+r = cl(["--metrics", f1, "--metrics-later", f2, "--out", o4])
+html4 = open(os.path.join(o4, "report.html")).read()
+check("cachelens all-inconclusive windows: visible INCONCLUSIVE banner, no rate",
+      r.returncode == 0 and "INCONCLUSIVE:" in html4 and "hit rate" not in html4.split("Findings")[0].lower().replace("window hit rate", ""))
+
 print()
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)
