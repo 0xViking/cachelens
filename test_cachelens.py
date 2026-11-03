@@ -183,6 +183,97 @@ f = analyze.diagnose([{"prompt": "abc", "prompt_tokens": 1, "cached_tokens": Non
                       {"prompt": "ab", "prompt_tokens": 1, "cached_tokens": None}])[0]
 check("strict-prefix inputs (ab/abc) handled, common prefix 2", f["diverges_at_char"] == 2)
 
+
+# 11. prompt_diag: generic prompt-file diagnostic (text level)
+import prompt_diag
+
+def pd_run(path):
+    return subprocess.run([sys.executable, "analyze.py", "--prompts", path],
+                          capture_output=True, text=True)
+
+def pd_write(name, objs):
+    f = os.path.join(T, name)
+    with open(f, "w") as fh:
+        for o in objs: fh.write(json.dumps(o) + "\n")
+    return f
+
+# 11a. bad JSON line -> INCONCLUSIVE rc 2, no traceback
+f = os.path.join(T, "bad.jsonl"); open(f, "w").write('{"prompt": "x"}\nnot json\n')
+r = pd_run(f)
+check("prompt_diag bad JSON -> INCONCLUSIVE rc=2, no traceback",
+      r.returncode == 2 and "INCONCLUSIVE" in r.stdout and "Traceback" not in r.stderr)
+
+# 11b. fewer than 2 prompts -> INCONCLUSIVE
+r = pd_run(pd_write("one.jsonl", [{"prompt": "only one"}]))
+check("prompt_diag single prompt -> INCONCLUSIVE", r.returncode == 2 and "INCONCLUSIVE" in r.stdout)
+
+# 11c. missing file -> INCONCLUSIVE
+r = pd_run(os.path.join(T, "does-not-exist.jsonl"))
+check("prompt_diag missing file -> INCONCLUSIVE", r.returncode == 2)
+
+# 11d. identical prompts -> finding identical, no blame on layout
+res = prompt_diag.diagnose(["same text\nmore"] * 4)
+check("prompt_diag identical prompts -> finding identical",
+      res["finding"] == "identical" and "server flags" in res["verdict"])
+
+# 11e. early variation: distinct-value count at divergence line is exact
+res = prompt_diag.diagnose(["head\nAAA\n" + "body" * 50, "head\nBBB\n" + "body" * 50])
+check("prompt_diag counts distinct values at divergence line",
+      res["first_divergence"]["distinct_values_at_that_line"] == 2)
+check("prompt_diag reports stable text after divergence",
+      res["stable_text_after_first_divergence"]["pct_of_first_prompt"] > 80)
+
+# 11f. counterexample: low-cardinality mid-prompt field is not called per-request-unique
+res = prompt_diag.diagnose(["sys\n[user-1]\n" + "p" * 200, "sys\n[user-2]\n" + "p" * 200,
+                            "sys\n[user-1]\n" + "p" * 200])
+note = res["varying_lines_in_first_prompt"][0]["cardinality_note"]
+check("prompt_diag distinguishes low-cardinality field from per-request id",
+      "small set" in note)
+
+# 11g. counterexample: reordered lines detected only when line SETS are identical
+res = prompt_diag.diagnose(["a\nb\nc", "c\nb\na"])
+check("prompt_diag reordered-lines finding", res["finding"] == "reordered-lines")
+res = prompt_diag.diagnose(["a\nb\nc", "c\nb\nDIFFERENT"])
+check("prompt_diag reorder not claimed when content also differs",
+      res["finding"] != "reordered-lines")
+
+# 11h. late variation -> layout not blamed
+res = prompt_diag.diagnose(["x" * 500 + "\ntail A", "x" * 500 + "\ntail B"])
+check("prompt_diag late-variation finding", res["finding"] == "late-variation")
+
+# 11i. messages-mode input renders and diagnoses
+res = prompt_diag.diagnose(["system: s\nuser: u1", "system: s\nuser: u2"])
+check("prompt_diag messages-rendered text works", res["first_divergence"]["line_index"] == 1)
+r = pd_run(pd_write("msgs.jsonl", [{"messages": [{"role": "system", "content": "s"},
+                                               {"role": "user", "content": "u1"}]},
+                                   {"messages": [{"role": "system", "content": "s"},
+                                               {"role": "user", "content": "u2"}]}]))
+check("prompt_diag messages file rc=0", r.returncode == 0)
+
+# 11j. empty prompt and malformed message rows fail closed
+try:
+    prompt_diag.diagnose(["text", ""]); check("prompt_diag empty prompt rejected", False)
+except prompt_diag.BadInput: check("prompt_diag empty prompt rejected", True)
+try:
+    prompt_diag.load(pd_write("badmsg.jsonl", [{"messages": [{"role": "user"}]}]))
+    check("prompt_diag malformed message rejected", False)
+except prompt_diag.BadInput: check("prompt_diag malformed message rejected", True)
+
+# 11k. strict-prefix prompts (one is a prefix of the other) handled
+res = prompt_diag.diagnose(["ab\ncd", "ab"])
+check("prompt_diag strict-prefix pair handled", res["leading_shared_chars"] == 2)
+
+# 11l. real example files ship findings as documented
+for ex, want in (("examples/user_id_midprompt.jsonl", "early-variation"),
+                 ("examples/reordered_tool_lines.jsonl", "reordered-lines")):
+    r = pd_run(ex)
+    check(f"prompt_diag {ex} -> {want}", r.returncode == 0 and f'"finding": "{want}"' in r.stdout)
+
+# 11m. no engine prediction: output never claims a hit rate or token figure
+r = pd_run("examples/user_id_midprompt.jsonl")
+check("prompt_diag states text-level scope, no hit-rate claim",
+      "text-level" in r.stdout and "hit rate" in r.stdout and "token" not in r.stdout.lower().replace("not tokens", ""))
+
 print()
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

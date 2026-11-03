@@ -48,9 +48,40 @@ Cost, auth, data retention:
 ## Contents
 - `workload.py` - synthetic workload with clean / broken / fixed variants
 - `probe.py` - OpenAI-compatible probing + vLLM /metrics capture
-- `analyze.py` - diagnosis rules + before/after verification
+- `analyze.py` - measured before/after verification + `--prompts` prompt-file diagnostic
+- `prompt_diag.py` - text-level prompt diagnostic used by `analyze.py --prompts`
+- `examples/` - two labeled synthetic prompt files for the diagnostic
 - `modal_serve.py` - one-command Muse Glimmer 30B serving on Modal (ephemeral)
 - `evidence/` - captured probe output (this run's raw data)
+
+## Use it on your own prompts (no GPU, no server)
+`analyze.py --prompts your-prompts.jsonl` runs a text-level diagnostic on prompts one
+app already sent to one model. It needs no GPU and no live server. Input is JSONL:
+one `{"prompt": "..."}` or `{"messages": [{"role": "...", "content": "..."}]}` per line.
+
+It reports:
+- how many characters of leading text all prompts share, and the same statistic
+  across prompt pairs (so one outlier cannot hide a systematic early break);
+- the first line where prompts differ, with example values and how many distinct
+  values that line takes (a per-request id/timestamp looks different from a small
+  set like a user or tenant field);
+- how much identical text sits AFTER that first difference, which a leading-prefix
+  cache cannot reuse across these requests;
+- whether the prompts are the same lines in a different order (e.g. reordered
+  tool or document lists).
+
+What it does NOT do: it does not measure any engine's cache, does not count tokens
+(character offsets only), and does not predict a hit rate. Prompt text can only show
+layout-level candidate causes. Server flags, cache size/eviction, block granularity
+and routing are separate causes this file cannot see. Moving or reordering prompt
+content can change model behavior - the app owner decides and re-checks outputs.
+
+Two labeled examples ship in `examples/` (synthetic, text-level only):
+```
+python3 analyze.py --prompts examples/user_id_midprompt.jsonl    # mid-prompt account id
+python3 analyze.py --prompts examples/reordered_tool_lines.jsonl # same tools, different order
+```
+Bad input fails closed with `INCONCLUSIVE` (exit code 2) instead of guessing.
 
 ## Reproduce
 ```
