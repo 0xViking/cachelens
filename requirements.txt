@@ -1,0 +1,2 @@
+modal>=1.6
+# probe/analyze/workload use only the Python standard library

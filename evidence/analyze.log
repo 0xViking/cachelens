@@ -1,0 +1,32 @@
+== ts_before (broken) == {
+  "requests": 18,
+  "total_prompt_tokens": 104328,
+  "per_request_cached_tokens": "unavailable - usage.cached_tokens not populated by this serving build; engine /metrics deltas below are the measurement of record"
+}
+== ts_after (fixed)  == {
+  "requests": 18,
+  "total_prompt_tokens": 104328,
+  "per_request_cached_tokens": "unavailable - usage.cached_tokens not populated by this serving build; engine /metrics deltas below are the measurement of record"
+}
+
+== engine /metrics delta: ts_before == {
+  "prompt_tokens_queried": 104328,
+  "cached_tokens_hit": 1088,
+  "hit_rate_pct": 1.0
+}
+== engine /metrics delta: ts_after  == {
+  "prompt_tokens_queried": 104328,
+  "cached_tokens_hit": 97696,
+  "hit_rate_pct": 93.6
+}
+
+FIX VERIFIED: prefix-cache hit rate 1.0% -> 93.6% on identical prompt volume (104328 tokens). Scope: this single synthetic serial run only.
+
+DIAGNOSIS: {
+  "rule": "first-divergence",
+  "diverges_at_char": 28,
+  "divergence_position": "EARLY (before the shared prefix body)",
+  "context": "...[request_time=2026-11-04T09:15:00+05:30]\\nYou are FieldOps, an operat...",
+  "verdict": "All 18 captured requests differ from character 28 of 25640 (character offset, not tokens). A per-request value sits near the START of the prompt, so tokens after it cannot match cached blocks from other requests - consistent with the low measured hit rate.",
+  "fix": "Move per-request fields after the shared prefix, then re-probe and confirm cached_tokens rises."
+}

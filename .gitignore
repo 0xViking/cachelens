@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.modal.toml
+.env
+.DS_Store
+evidence/*real*

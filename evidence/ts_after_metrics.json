@@ -1,0 +1,22 @@
+{
+  "before": {
+    "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"muse-glimmer\"}": "104328.0",
+    "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429419851e+09",
+    "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"muse-glimmer\"}": "1088.0",
+    "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429420016e+09",
+    "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"muse-glimmer\"}": "0.0",
+    "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429420166e+09",
+    "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"muse-glimmer\"}": "0.0",
+    "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429420328e+09"
+  },
+  "after": {
+    "vllm:prefix_cache_queries_total{engine=\"0\",model_name=\"muse-glimmer\"}": "208656.0",
+    "vllm:prefix_cache_queries_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429419851e+09",
+    "vllm:prefix_cache_hits_total{engine=\"0\",model_name=\"muse-glimmer\"}": "98784.0",
+    "vllm:prefix_cache_hits_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429420016e+09",
+    "vllm:external_prefix_cache_queries_total{engine=\"0\",model_name=\"muse-glimmer\"}": "0.0",
+    "vllm:external_prefix_cache_queries_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429420166e+09",
+    "vllm:external_prefix_cache_hits_total{engine=\"0\",model_name=\"muse-glimmer\"}": "0.0",
+    "vllm:external_prefix_cache_hits_created{engine=\"0\",model_name=\"muse-glimmer\"}": "1.7937135429420328e+09"
+  }
+}
