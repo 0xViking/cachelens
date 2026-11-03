@@ -28,7 +28,8 @@ def _counter(m, when, name, key):
 def metrics_delta(path):
     """Prefix-cache counter deltas over one probe window, FAIL-CLOSED:
     rejects missing/non-finite counters, counter resets, negative deltas,
-    hits > queries, model/engine label mismatches, and absent snapshots."""
+    hits > queries, model/engine label mismatches, and absent snapshots.
+    Returns (delta dict, series key) so callers can compare windows."""
     try:
         m = json.load(open(path))
     except FileNotFoundError:
@@ -55,13 +56,18 @@ def metrics_delta(path):
         raise InvalidEvidence("negative hit delta")
     if h > q:
         raise InvalidEvidence(f"hits ({h}) exceed queries ({q}) - counter mismatch")
-    return {"prompt_tokens_queried": int(q), "cached_tokens_hit": int(h),
-            "hit_rate_pct": round(100 * h / q, 1)}
+    return ({"prompt_tokens_queried": int(q), "cached_tokens_hit": int(h),
+             "hit_rate_pct": round(100 * h / q, 1)}, key)
 
 def summarize(rows):
-    total = sum(r["prompt_tokens"] or 0 for r in rows)
+    for r in rows:
+        if not isinstance(r.get("prompt_tokens"), (int, float)) or r["prompt_tokens"] <= 0:
+            raise InvalidEvidence(
+                f"row {r.get('id')} has missing/non-positive/non-numeric prompt_tokens")
+    total = sum(r["prompt_tokens"] for r in rows)
     out = {"requests": len(rows), "total_prompt_tokens": total}
-    if all(r["cached_tokens"] is None for r in rows):
+    have = [r["cached_tokens"] for r in rows if r["cached_tokens"] is not None]
+    if not have:
         # Do not report 0: the field was never populated, so per-request
         # cache accounting is UNKNOWN, not zero.
         out["per_request_cached_tokens"] = (
@@ -69,9 +75,9 @@ def summarize(rows):
             "serving build; engine /metrics deltas below are the "
             "measurement of record")
     else:
-        cached = [r["cached_tokens"] or 0 for r in rows]
-        out["requests_with_cache_hits"] = sum(1 for c in cached if c > 0)
-        out["total_cached_tokens"] = sum(cached)
+        out["cached_token_coverage"] = f"{len(have)}/{len(rows)} requests"
+        out["requests_with_cache_hits"] = sum(1 for c in have if c > 0)
+        out["total_cached_tokens"] = sum(have)
     return out
 
 def diagnose(rows):
@@ -82,15 +88,15 @@ def diagnose(rows):
     prompts = [r["prompt"] for r in rows if r.get("prompt")]
     if len(prompts) < 2:
         return findings
-    # Compare EVERY pair of captured prompts, not just the first two, and
-    # take the earliest divergence across all pairs.
-    div = None
-    for i in range(len(prompts)):
-        for j in range(i + 1, len(prompts)):
-            a, b = prompts[i], prompts[j]
-            d = next((k for k, (x, y) in enumerate(zip(a, b)) if x != y),
-                     min(len(a), len(b)))
-            div = d if div is None else min(div, d)
+    # Global common-prefix length across ALL captured prompts (not just the
+    # first pair). This is a character offset, not tokens.
+    div = 0
+    while True:
+        chars = {p[div] for p in prompts if div < len(p)}
+        if len(chars) == 1 and len(chars) == len({p[div] for p in prompts}) and all(div < len(p) for p in prompts):
+            div += 1
+        else:
+            break
     a = prompts[0]
     total = len(a)
     ctx = a[max(0, div-40):div+40].replace("\n", "\\n")
@@ -100,15 +106,18 @@ def diagnose(rows):
         "diverges_at_char": div,
         "divergence_position": "EARLY (before the shared prefix body)" if early else "late",
         "context": f"...{ctx}...",
-        "verdict": ("All %d captured requests differ from character %d of %d "
-                    "(character offset, not tokens). A per-request value sits "
-                    "near the START of the prompt, so tokens after it cannot "
-                    "match cached blocks from other requests - consistent "
-                    "with the low measured hit rate." % (len(prompts), div, total)) if early else
-                   ("All %d captured requests stay identical until character "
-                    "%d of %d - the shared prefix is intact at the prompt "
+        "verdict": ("The common leading prefix shared by ALL %d captured "
+                    "requests ends at character %d of %d (character offset, "
+                    "not tokens). A per-request value sits near the START of "
+                    "the prompt; prefix-cache reuse needs a byte-identical "
+                    "LEADING prefix, so requests that differ early cannot "
+                    "reuse each other's cached blocks - consistent with the "
+                    "low measured hit rate." % (len(prompts), div, total)) if early else
+                   ("All %d captured requests share a leading prefix of %d "
+                    "characters - the shared prefix is intact at the prompt "
                     "level, so this rule finds no prompt-layout cause; any "
-                    "misses need a different explanation." % (len(prompts), div, total)),
+                    "misses need a different explanation (variable suffixes, "
+                    "block granularity, cold cache, or serving config)." % (len(prompts), div)),
         "fix": "Move per-request fields after the shared prefix, then re-probe "
                "and confirm cached_tokens rises." if early else
                "Check server flags (prefix caching enabled) and engine metrics.",
@@ -136,25 +145,50 @@ def main():
     print("== ts_before (broken) ==", json.dumps(summarize(before), indent=2))
     print("== ts_after (fixed)  ==", json.dumps(summarize(after), indent=2))
     try:
-        mb = metrics_delta(sys.argv[1].replace(".jsonl", "_metrics.json"))
-        ma = metrics_delta(sys.argv[2].replace(".jsonl", "_metrics.json"))
+        mb, kb = metrics_delta(sys.argv[1].replace(".jsonl", "_metrics.json"))
+        ma, ka = metrics_delta(sys.argv[2].replace(".jsonl", "_metrics.json"))
     except InvalidEvidence as e:
         print(f"\nINCONCLUSIVE - evidence failed validation: {e}")
         return 2
+    # Cross-window consistency: same engine/model series in both windows.
+    if kb != ka:
+        print(f"\nINCONCLUSIVE - metrics series differ between windows ({kb} vs {ka})")
+        return 2
     print("\n== engine /metrics delta: ts_before ==", json.dumps(mb, indent=2))
     print("== engine /metrics delta: ts_after  ==", json.dumps(ma, indent=2))
-    # Verification criteria, stated explicitly: both windows valid AND
-    # identical queried volume AND the fixed variant's hit rate is high in
-    # absolute terms (>= 75%) AND at least 50 points above the broken run.
+    # The captured per-request usage must reconcile with the engine counters:
+    # queried-token delta must equal the sum of captured prompt_tokens.
+    for label, rows, md in (("ts_before", before, mb), ("ts_after", after, ma)):
+        captured = sum(r["prompt_tokens"] for r in rows)
+        if md["prompt_tokens_queried"] != captured:
+            print(f"\nINCONCLUSIVE - {label}: engine queried "
+                  f"{md['prompt_tokens_queried']} tokens but captured usage sums "
+                  f"to {captured}")
+            return 2
+    # Request identities must pair across the two windows.
+    if [r.get("id") for r in before] != [r.get("id") for r in after]:
+        print("\nINCONCLUSIVE - request ids do not pair across variants")
+        return 2
+    # Expected variant relationship: removing the per-request timestamp line
+    # must make each ts_before prompt identical to its ts_after pair
+    # (this run's actual transformation - do not generalize).
+    import re
+    ts = re.compile(r"^\[request_time=[^\]]+\]\n?", re.M)
+    for rb, ra in zip(before, after):
+        if ts.sub("", rb["prompt"]) != ts.sub("", ra["prompt"]):
+            print(f"\nINCONCLUSIVE - {rb.get('id')}: prompts are not the "
+                  "expected timestamp-move pair")
+            return 2
     if mb["prompt_tokens_queried"] != ma["prompt_tokens_queried"]:
         print(f"\nINCONCLUSIVE: prompt volume differs between variants "
               f"({mb['prompt_tokens_queried']} vs {ma['prompt_tokens_queried']}).")
         return 2
     ok = (ma["hit_rate_pct"] >= 75.0
           and ma["hit_rate_pct"] - mb["hit_rate_pct"] >= 50.0)
-    print(f"\n{'FIX VERIFIED' if ok else 'FIX NOT CONFIRMED'}: prefix-cache hit "
-          f"rate {mb['hit_rate_pct']}% -> {ma['hit_rate_pct']}% on identical "
-          f"prompt volume ({mb['prompt_tokens_queried']} tokens). "
+    print(f"\n{'OBSERVED INCREASE' if ok else 'NO SIGNIFICANT INCREASE'}: "
+          f"prefix-cache hit rate {mb['hit_rate_pct']}% -> {ma['hit_rate_pct']}% "
+          f"on identical prompt volume ({mb['prompt_tokens_queried']} tokens), "
+          f"with the validated timestamp-move transformation applied. "
           f"Scope: this single synthetic serial run only.")
     for f in diagnose(before):
         print("\nDIAGNOSIS:", json.dumps(f, indent=2))

@@ -14,7 +14,7 @@ Rows are appended incrementally so a crash still leaves partial evidence.
 Prompts are synthetic (see workload.py) - do not probe with real user data
 without redaction; evidence JSONL contains FULL prompts.
 """
-import argparse, json, time, urllib.request
+import argparse, json, os, time, urllib.request
 from datetime import datetime, timezone
 from workload import build_requests
 
@@ -53,9 +53,12 @@ def main():
     a = ap.parse_args()
     run_id = a.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
+    if os.path.exists(a.out):
+        raise SystemExit(f"refusing to overwrite existing evidence file: {a.out} "
+                         "(use a fresh --run-id/--out per run)")
     before = metrics_snapshot(a.server)
     n_rows = 0
-    with open(a.out, "w") as f:
+    with open(a.out, "x") as f:
         for r in build_requests(a.n):
             prompt = r["variants"][a.variant]
             t0 = time.perf_counter()

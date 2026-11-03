@@ -1,8 +1,9 @@
 # CacheLens - why isn't my prefix cache hitting?
 
 CacheLens diagnoses prefix-cache misses in self-hosted LLM serving (vLLM).
-It captures a real workload, finds what breaks byte-identical prefixes, and
-proves the fix with a controlled replay.
+It probes a synthetic agent-like workload, finds what breaks byte-identical
+leading prefixes, and measures the effect of a candidate fix with a
+controlled replay.
 
 Built during the Meta Global AI Developer Hackathon (Oct 27 - Nov 4 window)
 against **Muse Glimmer 30B** (Meta open weights, Apache 2.0) served with
@@ -15,7 +16,7 @@ vLLM on a single GPU.
    timestamp at char 28, BEFORE the shared prefix - `analyze.py`.
    Engine `/metrics`: 1.0% prefix-cache hit rate (1,088 / 104,328 tokens).
 3. The fix (move per-request fields after the shared prefix) is replayed -
-   `probe.py --variant ts_after`. Hit rate jumps to 93.6%
+   `probe.py --variant ts_after`. Observed hit rate rises to 93.6%
    (97,696 / 104,328 tokens). Median per-request latency drops 34.3%
    (3.6855s -> 2.4200s) - single synthetic run, not a production benchmark.
 
@@ -53,6 +54,12 @@ Cost, auth, data retention:
 
 ## Reproduce
 ```
-pip install modal && modal run modal_serve.py   # serves + probes inside the GPU container
+pip install -r requirements.txt   # needs a Modal token in ~/.modal.toml
+modal run --detach modal_serve.py # serves + probes inside the GPU container;
+                                  # note the run-id it prints at the end
+modal volume get cachelens-evidence <run-id>/ts_before.jsonl evidence/ts_before.jsonl
+modal volume get cachelens-evidence <run-id>/ts_after.jsonl  evidence/ts_after.jsonl
+modal volume get cachelens-evidence <run-id>/ts_before_metrics.json evidence/ts_before_metrics.json
+modal volume get cachelens-evidence <run-id>/ts_after_metrics.json  evidence/ts_after_metrics.json
 python3 analyze.py evidence/ts_before.jsonl evidence/ts_after.jsonl
 ```

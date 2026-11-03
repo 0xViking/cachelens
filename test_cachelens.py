@@ -83,7 +83,77 @@ r = subprocess.run([sys.executable, "analyze.py",
                    capture_output=True, text=True)
 check("missing evidence file handled", r.returncode != 0 and "Traceback" not in r.stderr)
 
-# 9. workload shapes: 18 requests, single user role, variants differ as designed
+# 9a. counterexample: identical prompts across windows -> NOT an increase (rc 2)
+import re
+def paired_rows(variant, n, ptoks, ts_move=True, idprefix="req-"):
+    rows = []
+    for i in range(n):
+        p = (f"[request_time=2026-11-04T09:{15+i:02d}:00+05:30]\n" + "x" * 100
+             if variant == "ts_before" else
+             "x" * 100 + f"\n[request_time=2026-11-04T09:{15+i:02d}:00+05:30]")
+        rows.append({"id": f"{idprefix}{i}", "variant": variant, "prompt": p,
+                     "prompt_tokens": ptoks, "cached_tokens": None, "error": None})
+    return rows
+d3, d4 = os.path.join(T, "v3"), os.path.join(T, "v4"); os.makedirs(d3); os.makedirs(d4)
+# identical prompts (no timestamp move) but metrics claim huge improvement
+for d, v in ((d3, "ts_before"), (d4, "ts_after")):
+    with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
+        for r in paired_rows(v, 18, 100): fh.write(json.dumps(r) + "\n")
+write_metrics(os.path.join(d3, "ts_before_metrics.json"), 0, 1800, 0, 10)
+write_metrics(os.path.join(d4, "ts_after_metrics.json"), 0, 1800, 0, 1700)
+rc = subprocess.run([sys.executable, "analyze.py",
+                     os.path.join(d3, "ts_before.jsonl"),
+                     os.path.join(d4, "ts_after.jsonl")],
+                    capture_output=True, text=True)
+check("identical prompts across windows -> INCONCLUSIVE (not VERIFIED)",
+      rc.returncode == 2 and "timestamp-move" in rc.stdout)
+
+# 9b. unmatched ids -> INCONCLUSIVE
+for d, v, idp in ((d3, "ts_before", "req-"), (d4, "ts_after", "other-")):
+    with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
+        for r in paired_rows(v, 18, 100, idprefix=idp): fh.write(json.dumps(r) + "\n")
+rc = subprocess.run([sys.executable, "analyze.py",
+                     os.path.join(d3, "ts_before.jsonl"),
+                     os.path.join(d4, "ts_after.jsonl")],
+                    capture_output=True, text=True)
+check("unmatched request ids -> INCONCLUSIVE", rc.returncode == 2 and "ids" in rc.stdout)
+
+# 9c. captured usage sum != engine queried -> INCONCLUSIVE
+for d, v in ((d3, "ts_before"), (d4, "ts_after")):
+    with open(os.path.join(d, f"{v}.jsonl"), "w") as fh:
+        for r in paired_rows(v, 18, 100): fh.write(json.dumps(r) + "\n")
+write_metrics(os.path.join(d3, "ts_before_metrics.json"), 0, 1000, 0, 10)  # says 1000, captured 1800
+write_metrics(os.path.join(d4, "ts_after_metrics.json"), 0, 1800, 0, 1700)
+rc = subprocess.run([sys.executable, "analyze.py",
+                     os.path.join(d3, "ts_before.jsonl"),
+                     os.path.join(d4, "ts_after.jsonl")],
+                    capture_output=True, text=True)
+check("usage/counter mismatch -> INCONCLUSIVE", rc.returncode == 2 and "captured usage" in rc.stdout)
+
+# 9d. different models between windows -> INCONCLUSIVE
+write_metrics(os.path.join(d3, "ts_before_metrics.json"), 0, 1800, 0, 10)
+write_metrics(os.path.join(d4, "ts_after_metrics.json"), 0, 1800, 0, 1700,
+              key='{engine="0",model_name="other-model"}')
+rc = subprocess.run([sys.executable, "analyze.py",
+                     os.path.join(d3, "ts_before.jsonl"),
+                     os.path.join(d4, "ts_after.jsonl")],
+                    capture_output=True, text=True)
+check("different model series across windows -> INCONCLUSIVE", rc.returncode == 2)
+
+# 9e. probe refuses to overwrite existing evidence
+out = os.path.join(T, "exists.jsonl"); open(out, "w").write("{}\n")
+r = subprocess.run([sys.executable, "probe.py", "--variant", "ts_before",
+                    "--out", out, "--server", "http://127.0.0.1:1"],
+                   capture_output=True, text=True)
+check("probe refuses to overwrite evidence", "refusing to overwrite" in (r.stdout + r.stderr))
+
+# 9f. runner static checks: host pinned + cleanup in finally
+src = open("modal_serve.py").read()
+check("runner pins vLLM to 127.0.0.1", '"--host", "127.0.0.1"' in src)
+check("runner terminates server in finally", "finally:" in src and "srv.terminate()" in src)
+check("runner checks analyzer return code", "r.returncode not in (0, 1)" in src)
+
+# 10. workload shapes: 18 requests, single user role, variants differ as designed
 rs = build_requests(18)
 check("18 requests built", len(rs) == 18)
 check("ts_before puts timestamp first", rs[0]["variants"]["ts_before"].startswith("[request_time="))

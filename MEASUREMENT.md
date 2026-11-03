@@ -27,17 +27,27 @@
 - Metric windows: probe.py snapshots /metrics immediately BEFORE request 1 and
   immediately AFTER the last request of each variant. All reported numbers are
   per-window counter DELTAS (counter increments within each window), which
-  remove counts from earlier windows; they do NOT isolate cache state.
+  remove counts from earlier windows; they do NOT isolate cache state, and no
+  cache-state reset was performed between variants.
+- Shared-substring note: the analysis only reasons about LEADING prefixes of
+  the rendered prompt text. An arbitrary shared substring elsewhere in the
+  prompt is NOT prefix-cache reuse.
+- Provenance: the committed evidence was captured with the first-version
+  probe (no per-row run_id, no completion text/finish_reason fields - those
+  fields were added to the probe afterwards). The run identity is the
+  cachelens-evidence volume contents of Nov 3, 2026 plus evidence/vllm.log;
+  no synthetic run metadata was backfilled.
 
 ## Results (engine counters, the measurement of record)
 - ts_before: prefix_cache_queries +104,328, hits +1,088 -> 1.0% hit rate.
-  The 1,088 hits are a small residual; likely explanation (not verified at
-  token level): only the chat-template header tokens before the diverging
-  timestamp (char 28) can match across requests.
-- ts_after: queries +104,328, hits +97,696 -> 93.6% hit rate. Request 1
-  populates the cache, so at most 17/18 of the prompt volume could be served
-  from cache; the observed 93.6% is below that 94.4% bound, consistent with
-  prefix-cache block-boundary effects (exact cause not verified).
+  The 1,088 hits are a small residual (unexplained at token level; only
+  tokens before the divergence point - char 28 - are candidates for
+  cross-request reuse).
+- ts_after: queries +104,328, hits +97,696 -> 93.6% hit rate. For reference,
+  an idealized identical-prompt run in which request 1 populates the cache
+  and requests 2-18 fully reuse it would hit 17/18 (~94.4%) of the prompt
+  volume; that is an idealized reference point, not a verified bound, and
+  the gap to 93.6% is not explained at token level.
 - Latency (probe-measured wall time per completion, max_tokens=64 requested;
   completion texts and decoded token counts were NOT recorded, so no
   answer-equivalence or exact decode-length claim is made). Single run per
@@ -54,7 +64,7 @@
   explicitly in its output.
 
 ## Diagnosis provenance
-- analyze.py's divergence finding (char 29, [request_time=...] field) is
+- analyze.py's divergence finding (char 28, [request_time=...] field) is
   computed from the ACTUAL prompts captured in evidence/ts_before.jsonl,
   not from workload.py assumptions.
 

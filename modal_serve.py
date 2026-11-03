@@ -47,7 +47,7 @@ def run_probes(run_id: str = ""):
         from datetime import datetime, timezone
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     outdir = f"/evidence/{run_id}"
-    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(outdir)  # fail loudly if run-id dir already exists
     srv = subprocess.Popen([
         "vllm", "serve", MODEL,
         "--served-model-name", "muse-glimmer",
@@ -56,6 +56,7 @@ def run_probes(run_id: str = ""):
         "--tool-call-parser", "muse_glimmer",
         "--reasoning-parser", "muse_glimmer",
         "--generation-config", "auto",
+        "--host", "127.0.0.1",
         "--port", "8000",
         "--max-model-len", "32768",
         "--enable-prefix-caching",
