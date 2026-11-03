@@ -35,7 +35,7 @@ def scene(term_lines, caption_lines, tag="CAPTURED RUN REPLAY - Nov 3, 2026"):
 scene([
     ("$ python3 probe.py --variant ts_before", DIM, False),
     ("", FG, False),
-    ("18 agent requests. One shared 25.6KB runbook prefix.", FG, True),
+    ("18 agent requests. One shared 25.5KB runbook prefix.", FG, True),
     ("The prefix cache should absorb it.", FG, False),
     ("It doesn't - and nothing tells you why.", RED, False),
 ], ["Repeated prompt processing can waste GPU time.", "When a shared prefix stops caching, nothing tells you why."]).save("s1.png")

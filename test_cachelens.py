@@ -175,6 +175,12 @@ check("18 requests built", len(rs) == 18)
 check("ts_before puts timestamp first", rs[0]["variants"]["ts_before"].startswith("[request_time="))
 check("ts_after puts shared text first", rs[0]["variants"]["ts_after"].startswith("You are FieldOps"))
 
+# strict-prefix regression: "ab" vs "abc" must not raise and reports 2
+f = analyze.diagnose([{"prompt": "abc", "prompt_tokens": 1, "cached_tokens": None},
+                      {"prompt": "ab", "prompt_tokens": 1, "cached_tokens": None}])[0]
+check("strict-prefix inputs (ab/abc) handled, common prefix 2", f["diverges_at_char"] == 2)
+
 print()
-print("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED")
+n = sum(1 for line in open(__file__).read().splitlines() if line.strip().startswith("check("))
+print(f"{n} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

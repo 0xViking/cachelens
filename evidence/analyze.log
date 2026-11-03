@@ -27,6 +27,6 @@ DIAGNOSIS: {
   "diverges_at_char": 28,
   "divergence_position": "EARLY (before the shared prefix body)",
   "context": "...[request_time=2026-11-04T09:15:00+05:30]\\nYou are FieldOps, an operat...",
-  "verdict": "The common leading prefix shared by ALL 18 captured requests ends at character 28 of 25640 (character offset, not tokens). A per-request value sits near the START of the prompt; prefix-cache reuse needs a byte-identical LEADING prefix, so requests that differ early cannot reuse each other's cached blocks - consistent with the low measured hit rate.",
+  "verdict": "The common leading prefix shared by ALL 18 captured requests ends at character 28 of 25640 (character offset, not tokens). A per-request value sits near the START of the prompt; prefix-cache reuse needs a byte-identical LEADING prefix, so early per-request variation leaves little shared leading content to reuse - consistent with the low measured hit rate.",
   "fix": "Move per-request fields after the shared prefix, then re-probe and confirm cached_tokens rises."
 }

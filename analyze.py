@@ -106,9 +106,9 @@ def diagnose(rows):
                     "requests ends at character %d of %d (character offset, "
                     "not tokens). A per-request value sits near the START of "
                     "the prompt; prefix-cache reuse needs a byte-identical "
-                    "LEADING prefix, so requests that differ early cannot "
-                    "reuse each other's cached blocks - consistent with the "
-                    "low measured hit rate." % (len(prompts), div, total)) if early else
+                    "LEADING prefix, so early per-request variation leaves "
+                    "little shared leading content to reuse - consistent "
+                    "with the low measured hit rate." % (len(prompts), div, total)) if early else
                    ("All %d captured requests share a leading prefix of %d "
                     "characters - the shared prefix is intact at the prompt "
                     "level, so this rule finds no prompt-layout cause; any "
