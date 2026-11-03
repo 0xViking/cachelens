@@ -50,7 +50,8 @@ Cost, auth, data retention:
 - `probe.py` - OpenAI-compatible probing + vLLM /metrics capture
 - `analyze.py` - measured before/after verification + `--prompts` prompt-file diagnostic
 - `prompt_diag.py` - text-level prompt diagnostic used by `analyze.py --prompts`
-- `examples/` - two labeled synthetic prompt files for the diagnostic
+- `env_report.py` - serving-environment report from local log/metrics files
+- `examples/` - labeled synthetic inputs for the prompt diagnostic and env report
 - `modal_serve.py` - one-command Muse Glimmer 30B serving on Modal (ephemeral)
 - `evidence/` - captured probe output (this run's raw data)
 
@@ -82,6 +83,35 @@ python3 analyze.py --prompts examples/user_id_midprompt.jsonl    # mid-prompt ac
 python3 analyze.py --prompts examples/reordered_tool_lines.jsonl # same tools, different order
 ```
 Bad input fails closed with `INCONCLUSIVE` (exit code 2) instead of guessing.
+
+## Report on the serving environment (no probing, local files only)
+`env_report.py` collects what a serving setup already says about itself and keeps
+facts, observations and unknowns separate. It reads only local files the app owner
+gives it - it never opens a network connection, never SSHes anywhere, and reports
+every field it cannot find as "not available" instead of guessing.
+
+```
+python3 env_report.py --log vllm.log --metrics snap1.txt --metrics-later snap2.txt \
+    --mean-prompt-tokens 5796
+# on the serving host only, add GPU names:
+python3 env_report.py --log vllm.log --with-nvidia-smi
+```
+
+- `--log`: a vLLM startup/runtime log. Parsed facts include engine version, model,
+  `enable_prefix_caching`, dtype, max_seq_len, GPU KV cache size in tokens and GiB,
+  total GPU memory, and the gpu_memory_utilization setting - each with its source.
+- `--metrics` / `--metrics-later`: two Prometheus `/metrics` snapshots. A hit-rate
+  reading is made ONLY from the counter delta between two snapshots; lifetime
+  counters and a single usage snapshot are reported as facts with no conclusion
+  (one snapshot cannot separate eviction from a cold start or a burst).
+- `--mean-prompt-tokens`: enables one arithmetic capacity ratio (KV cache tokens
+  vs your mean prompt), labeled as observed/given numbers.
+- `--with-nvidia-smi`: queries the machine running the report; only meaningful on
+  the serving host, and labeled as such.
+
+Observations are tied to observed values (example: `enable_prefix_caching=False`
+means no prompt layout can hit a cache that is off). Static metadata is never used
+to claim a hardware bottleneck. Labeled synthetic fixtures live in `examples/env/`.
 
 ## Reproduce
 ```

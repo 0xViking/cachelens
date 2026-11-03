@@ -274,6 +274,78 @@ r = pd_run("examples/user_id_midprompt.jsonl")
 check("prompt_diag states text-level scope, no hit-rate claim",
       "text-level" in r.stdout and "hit rate" in r.stdout and "token" not in r.stdout.lower().replace("not tokens", ""))
 
+
+# 12. env_report: serving-environment collector (local files only)
+import env_report
+
+def er_main(args):
+    return subprocess.run([sys.executable, "env_report.py"] + args,
+                          capture_output=True, text=True)
+
+# 12a. real Glimmer log parses to the verified values
+res = env_report.report(open("evidence/vllm.log", errors="replace").read(), None, None, False)
+check("env_report parses real vllm.log facts",
+      res["facts"]["gpu_kv_cache_tokens"] == 776150 and
+      res["facts"]["enable_prefix_caching"] is True and
+      res["facts"]["gpu_memory_total_gib"] == 79.27 and
+      res["sources"]["gpu_kv_cache_tokens"] == "server log")
+
+# 12b. missing fields are 'not available', never guessed
+res = env_report.report("some random log line\n", None, None, False)
+check("env_report unknown fields stay not available",
+      res["facts"]["enable_prefix_caching"] == "not available" and
+      res["facts"]["gpu_kv_cache_tokens"] == "not available")
+
+# 12c. prefix caching disabled is called out from config evidence
+res = env_report.report(open("examples/env/vllm_prefix_off.log").read(), None, None, False)
+check("env_report flags enable_prefix_caching=False",
+      any("disabled" in o["observation"] for o in res["observations"]) and
+      res["facts"]["tensor_parallel_size"] == 2)
+
+# 12d. single metrics snapshot: usage is a fact, NO eviction/hit-rate claim
+res = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, False)
+text = json.dumps(res)
+check("env_report single snapshot makes no eviction/hit-rate claim",
+      "window" not in res["facts"] and "eviction" not in text.lower().replace(
+          "cannot separate eviction pressure from a cold start or a burst", "").replace(
+          "layout, capacity, eviction or routing", "") and
+      "lifetime counters" in res["facts"].get("prefix_cache_counters_note", ""))
+
+# 12e. two snapshots: window hit rate is counter arithmetic only
+res = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, False,
+                        metrics_later_text=open("examples/env/metrics_snap2.txt").read())
+check("env_report window hit rate = 50/1000 = 5.0%",
+      res["facts"].get("window_prefix_cache_hit_pct") == 5.0)
+
+# 12f. counterexample: zero query delta -> no hit-rate reading
+res = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, False,
+                        metrics_later_text=open("examples/env/metrics_snap1.txt").read())
+check("env_report zero-delta window says no traffic, not 0% hits",
+      "window_prefix_cache_hit_pct" not in res["facts"] and
+      any("no prefix-cache queries" in o["observation"] for o in res["observations"]))
+
+# 12g. capacity ratio only when caller supplies mean prompt tokens
+res = env_report.report(open("evidence/vllm.log", errors="replace").read(), None, 5796, False)
+check("env_report capacity ratio 776150/5796 ~ 133.9",
+      any("133.9" in o["observation"] for o in res["observations"]))
+res = env_report.report(open("evidence/vllm.log", errors="replace").read(), None, None, False)
+check("env_report no capacity ratio without mean prompt tokens",
+      not any("mean-size prompts" in o["observation"] for o in res["observations"]))
+
+# 12h. garbage input -> INCONCLUSIVE rc 2
+r = er_main(["--log", os.path.join(T, "bad.jsonl")])  # 'not json' content, no vllm facts
+check("env_report unparseable input -> INCONCLUSIVE rc=2",
+      r.returncode == 2 and "INCONCLUSIVE" in r.stdout)
+r = er_main([])
+check("env_report no input -> INCONCLUSIVE rc=2", r.returncode == 2)
+r = er_main(["--log", os.path.join(T, "nope.log")])
+check("env_report missing file -> INCONCLUSIVE rc=2", r.returncode == 2)
+
+# 12i. labeled example log yields its documented finding via CLI
+r = er_main(["--log", "examples/env/vllm_prefix_off.log"])
+check("env_report CLI example: prefix-off log flagged",
+      r.returncode == 0 and "prefix caching is disabled" in r.stdout)
+
 print()
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

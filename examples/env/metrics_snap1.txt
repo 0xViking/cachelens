@@ -1,0 +1,4 @@
+# HELP vllm:gpu_cache_usage_perc GPU KV cache usage
+vllm:gpu_cache_usage_perc{engine="0",model_name="acme/small-model"} 0.97
+vllm:prefix_cache_queries_total{engine="0",model_name="acme/small-model"} 1000
+vllm:prefix_cache_hits_total{engine="0",model_name="acme/small-model"} 100
