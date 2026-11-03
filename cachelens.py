@@ -27,7 +27,11 @@ CLASS_STYLE = {
 }
 
 def build(args):
-    out = {"redacted_examples": not args.show_examples, "sections": {}}
+    paths = [x for x in (args.prompts, args.log, args.metrics, args.metrics_later,
+                         args.pair_before, args.pair_after) if x]
+    synth = args.synthetic or any("examples" in os.path.normpath(os.path.abspath(x)).split(os.sep) for x in paths)
+    out = {"redacted_examples": not args.show_examples, "sections": {},
+           "synthetic": bool(synth), "same_system_asserted_by_user": bool(args.same_system)}
     prompts = None
     if args.prompts:
         prompts = prompt_diag.load(args.prompts)
@@ -56,10 +60,10 @@ def build(args):
                                        "analyzer_rc": r.returncode}
     if not out["sections"]:
         raise prompt_diag.BadInput("give at least one of --prompts, --log/--metrics, --pair-before/--pair-after")
-    out["findings"] = findings(out["sections"])
+    out["findings"] = findings(out["sections"], args.same_system)
     return out
 
-def findings(sec):
+def findings(sec, same_system=False):
     rows = []
     p, e, m = sec.get("prompts"), sec.get("environment"), sec.get("measured")
     if p:
@@ -104,14 +108,28 @@ def findings(sec):
                         m["after"]["cached_tokens_hit"], m["after"]["prompt_tokens_queried"],
                         m["before"]["prompt_tokens_queried"]),
                      "single synthetic serial run only; no TTFT, cost or answer-equivalence claim"))
-    # consistency check only when a real window and a layout finding both exist
+    # cross-class reading only with user-asserted provenance and no conflicting evidence
+    user_files = sum(1 for k in ("prompts", "environment") if k in sec)
     if p and e:
         oks = [w for w in e.get("windows", []) if w["status"] == "ok"]
-        if oks and p.get("finding") == "early-variation":
-            lo = min(w["hit_pct"] for w in oks)
-            rows.append(("Early layout break AND measured window hit rate %.1f%%" % lo, "COMBINED CHECK",
-                         "text-level break from prompts file + counter delta from two snapshots",
-                         "consistent with, not proof of, layout as the cause; the two may come from different traffic"))
+        off = e["facts"].get("enable_prefix_caching") is False
+        if off and oks and any(w["hit_pct"] > 0 for w in oks):
+            rows.append(("CONFLICTING EVIDENCE: the log says prefix caching is disabled, but the window shows hits",
+                         "COMBINED CHECK",
+                         "enable_prefix_caching=False (log) vs hit rate %.1f%% (counters)" % max(w["hit_pct"] for w in oks),
+                         "the log and the counters probably come from different servers or runs; do not combine them"))
+        elif oks and p.get("finding") == "early-variation":
+            if same_system:
+                lo = min(w["hit_pct"] for w in oks)
+                rows.append(("Early layout break AND measured window hit rate %.1f%% (you asserted these describe the same system)" % lo,
+                             "COMBINED CHECK",
+                             "text-level break + counter delta; link asserted by the user, not verified",
+                             "consistent with, not proof of, layout as the cause"))
+            else:
+                rows.append(("NOT LINKED: prompts file and cache counters are separate files",
+                             "COMBINED CHECK",
+                             "CacheLens cannot verify they describe the same server and traffic",
+                             "pass --same-system only if you know they do; no cross-reading is made"))
     return rows
 
 def svg_layout(p, lens):
@@ -136,8 +154,8 @@ def svg_layout(p, lens):
     parts.append('<text x="%.1f" y="12" font-size="12" fill="#dc2626" text-anchor="%s">first difference at char %d</text>'
                  % (bx + (4 if bx < W / 2 else -4), "start" if bx < W / 2 else "end", cp))
     parts.append('</svg>')
-    legend = ('<div class="legend"><span><i style="background:#10b981"></i>shared leading text (a prefix cache can reuse this)</span>'
-              '<span><i style="background:#f59e0b"></i>everything after the first difference (not reusable across these requests by a leading-prefix cache)</span></div>')
+    legend = ('<div class="legend"><span><i style="background:#10b981"></i>leading text shared by ALL these prompts (character-level; real reuse depends on token blocks and needs measurement)</span>'
+              '<span><i style="background:#f59e0b"></i>text after the first difference: not shared by ALL prompts as a leading prefix. Reuse among subsets of prompts, or real token/cache behavior, needs measurement</span></div>')
     return "".join(parts) + legend
 
 def badge(cls):
@@ -177,6 +195,9 @@ def render(res):
     else:
         h.append('<p class="na">Not provided (no --prompts file): <span class="unk">unknown</span></p>')
     h.append('</div>')
+    if res.get("synthetic"):
+        h.insert(8, '<div class="card" style="border-left:6px solid #7c3aed"><b>SYNTHETIC EXAMPLE DATA.</b> '
+                    'These numbers come from made-up demo inputs, not from a real system.</div>')
     # banner when every requested window was unusable
     if "environment" in sec and sec["environment"]["windows"] and \
             all(w["status"] == "inconclusive" for w in sec["environment"]["windows"]):
@@ -218,7 +239,9 @@ def render(res):
         for lab, k in (("before (timestamp first)", "before"), ("after (timestamp moved)", "after")):
             d = m[k]
             h.append('<tr><td>%s</td><td>%d</td><td>%d</td><td><b>%s%%</b></td></tr>' % (E(lab), d["prompt_tokens_queried"], d["cached_tokens_hit"], d["hit_rate_pct"]))
-        h.append('</table><p class="foot">%s</p>' % E(m["verdict"]))
+        h.append('</table><p class="foot">%s</p><p class="foot">Both runs used the same engine/model metric series (validated) and this '
+                 'harness performs no cache-clearing step, so "after" ran on a server that had just served "before". '
+                 'Single synthetic serial run; no TTFT, cost or answer-equivalence claim.</p>' % E(m["verdict"]))
     else:
         h.append('<p class="na">No measured pair provided: <span class="unk">unknown</span>. Measuring needs a served model and a before/after run.</p>')
     h.append('</div>')
@@ -242,6 +265,9 @@ def main(argv):
     ap.add_argument("--metrics-later"); ap.add_argument("--mean-prompt-tokens", type=float)
     ap.add_argument("--pair-before"); ap.add_argument("--pair-after")
     ap.add_argument("--show-examples", action="store_true")
+    ap.add_argument("--same-system", action="store_true",
+                    help="YOU assert the prompts, log and metrics describe the same server and traffic")
+    ap.add_argument("--synthetic", action="store_true", help="label the report as SYNTHETIC example data")
     ap.add_argument("--out", default="cachelens-report")
     a = ap.parse_args(argv)
     try:

@@ -517,6 +517,35 @@ html4 = open(os.path.join(o4, "report.html")).read()
 check("cachelens all-inconclusive windows: visible INCONCLUSIVE banner, no rate",
       r.returncode == 0 and "INCONCLUSIVE:" in html4 and "hit rate" not in html4.split("Findings")[0].lower().replace("window hit rate", ""))
 
+# 15. report provenance, conflicts, synthetic labeling, caveats (main's review of the rendered pages)
+ex_args = ["--prompts", "examples/user_id_midprompt.jsonl", "--log", "examples/env/vllm_prefix_off.log",
+           "--metrics", "examples/env/metrics_snap1.txt", "--metrics-later", "examples/env/metrics_snap2.txt"]
+o5 = os.path.join(T, "rep_conflict"); r = cl(ex_args + ["--out", o5])
+h5 = open(os.path.join(o5, "report.html")).read()
+j5 = json.load(open(os.path.join(o5, "report.json")))
+check("report: cache-off log + hits window -> CONFLICTING EVIDENCE, no combined layout-cause row",
+      "CONFLICTING EVIDENCE" in h5 and "Early layout break AND" not in h5)
+check("report: examples/ inputs are labeled SYNTHETIC EXAMPLE DATA and flagged in JSON",
+      "SYNTHETIC EXAMPLE DATA" in h5 and j5["synthetic"] is True)
+# real-evidence run is not labeled synthetic; measured caveat names same-server/no cache clear
+check("report: real evidence run not labeled synthetic; measured caveat states same server, no cache clear",
+      "SYNTHETIC EXAMPLE DATA" not in html3 and "no cache-clearing step" in html3 and "same engine/model metric series" in html3)
+# legends: not 'reusable across requests'; explicit ALL prompts + measurement caveat
+check("report legend: shared by ALL prompts, character-level, needs measurement",
+      "shared by ALL" in html3 and "needs measurement" in html3 and "not reusable across these requests" not in html3)
+# no assumed link: early break + ok window without --same-system -> NOT LINKED row, no combined claim
+ok_log = None
+mA = os.path.join(T, "mm1.txt"); mB = os.path.join(T, "mm2.txt")
+open(mA, "w").write(mtxt(1000, 100)); open(mB, "w").write(mtxt(2000, 150))
+o6 = os.path.join(T, "rep_nolink"); cl(["--prompts", secret, "--metrics", mA, "--metrics-later", mB, "--out", o6])
+h6 = open(os.path.join(o6, "report.html")).read()
+check("report: separate prompt file + counters without provenance -> NOT LINKED, no cross-reading",
+      "NOT LINKED" in h6 and "Early layout break AND" not in h6)
+o7 = os.path.join(T, "rep_link"); cl(["--prompts", secret, "--metrics", mA, "--metrics-later", mB, "--same-system", "--out", o7])
+h7 = open(os.path.join(o7, "report.html")).read()
+check("report: --same-system allows the hedged combined row, labeled user-asserted",
+      "you asserted" in h7 and "not proof of" in h7 and "NOT LINKED" not in h7)
+
 print()
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

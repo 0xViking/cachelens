@@ -128,6 +128,11 @@ valid counter window both exist, and says "consistent with", never "caused by".
 - Any unusable input (bad file, bad JSON, non-UTF-8, an inconclusive measured pair) exits 2 with
   `INCONCLUSIVE`. If every requested cache window is unusable the report still renders, with a
   visible INCONCLUSIVE banner and no hit rate.
+- Provenance: CacheLens cannot know that your prompts file, log and metrics describe the same
+  server. Without `--same-system` (your assertion) the report adds a "NOT LINKED" row and makes no
+  cross-reading; with it, one hedged "consistent with, not proof of" row. If the log says prefix
+  caching is off but the counters show hits, it flags CONFLICTING EVIDENCE instead.
+- Inputs under an `examples/` folder, or `--synthetic`, get a "SYNTHETIC EXAMPLE DATA" banner.
 - The measured section is the existing validated pair (single synthetic serial run); it only
   applies to the timestamp-move experiment shipped here, not to arbitrary prompts.
 - `analyze.py --prompts ... --no-examples` accepts the flag in any position. The plain CLI prints
