@@ -166,3 +166,15 @@ python3 analyze.py evidence/ts_before.jsonl evidence/ts_after.jsonl
   comparison covers only the old files that could be recovered, so missing old edits cannot be excluded. The carried-over
   idea is to treat engine counters as the measurement of record.
 - This is a disclosure, not a claim about how judges will treat eligibility.
+
+## GPU hardware (nvidia-smi)
+
+Run this fixed read-only command on the model-serving host and save the output:
+
+    nvidia-smi --query-gpu=index,name,memory.total,memory.used,driver_version --format=csv,noheader,nounits > smi.csv
+    python3 cachelens.py --log vllm.log --smi-file smi.csv
+
+CacheLens parses name, total memory and driver. It cannot verify which host produced the file; it only
+cross-checks total GPU memory against the log ("consistent with, not proof of" / "WARNING: probably
+different machines"). `env_report.py --with-nvidia-smi` runs the same fixed command (no shell, 15 s timeout)
+on the machine running the report. Tested with fixtures and a mocked subprocess; NOT validated on a real GPU host yet.

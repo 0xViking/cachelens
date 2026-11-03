@@ -573,5 +573,41 @@ check("env_report capacity ratio says the mean prompt tokens were user-supplied"
       any("YOU supplied" in o["evidence"] for o in res["observations"]))
 
 print()
+# 13. nvidia-smi collector (fixed command; parsed from file or mocked subprocess; no GPU needed)
+import unittest.mock as _mock
+_lg = open("evidence/vllm.log", errors="replace").read()
+_r = env_report.report(_lg, None, None, False, smi_text=open("examples/env/smi_h100.csv").read())
+check("smi file: GPU name/memory/driver parsed, source says unverified host",
+      "H100" in _r["facts"]["gpu_hardware"][0] and "550.54.15" in _r["facts"]["gpu_hardware"][0]
+      and "cannot verify" in _r["sources"]["gpu_hardware"])
+check("smi file consistent with log device memory (79.27 vs 79.65 GiB) says consistent, not proof",
+      any("consistent with the log" in o["observation"] and "not proof" in o["note"] for o in _r["observations"])
+      and not any("WARNING: nvidia-smi" in o["observation"] for o in _r["observations"]))
+check("smi supplied removes GPU-name unknown",
+      not any("GPU model name" in u for u in _r["unknowns"]))
+_r = env_report.report(_lg, None, None, False, smi_text=open("examples/env/smi_a10.csv").read())
+check("smi memory mismatching the log warns different machines",
+      any("WARNING: nvidia-smi" in o["observation"] for o in _r["observations"]))
+for _bad in ("", "garbage", "0, name, 80000", "x, n, 80000, 1, 5", "0, n, -5, 1, 5", "0, n, 100, 500, 5"):
+    try:
+        env_report.report(_lg, None, None, False, smi_text=_bad)
+        check("smi bad input fails closed: %r" % _bad, False)
+    except env_report.BadInput:
+        check("smi bad input fails closed: %r" % _bad, True)
+_ok = _mock.Mock(returncode=0, stdout=open("examples/env/smi_h100.csv").read())
+with _mock.patch("env_report.subprocess.run", return_value=_ok) as _m:
+    _r = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, True)
+    check("local collector runs exactly the fixed read-only argv, no shell",
+          _m.call_args[0][0] == env_report.SMI_CMD and not _m.call_args[1].get("shell")
+          and "THIS report" in _r["sources"]["gpu_hardware"])
+with _mock.patch("env_report.subprocess.run", side_effect=FileNotFoundError):
+    _r = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, True)
+    check("local collector missing nvidia-smi -> unknown, not invented",
+          _r["facts"]["gpu_hardware"] == env_report.NA and any("GPU model name" in u for u in _r["unknowns"]))
+_rc = subprocess.run([sys.executable, "cachelens.py", "--log", "evidence/vllm.log", "--smi-file", "examples/env/smi_h100.csv", "--out", "/tmp/r_smi"], capture_output=True, text=True)
+check("cachelens report with --smi-file shows GPU row", _rc.returncode == 0 and "H100" in open("/tmp/r_smi/report.html").read())
+_rc = subprocess.run([sys.executable, "cachelens.py", "--log", "evidence/vllm.log", "--smi-file", "/nonexistent", "--out", "/tmp/r_smi2"], capture_output=True, text=True)
+check("cachelens missing smi file fails rc!=0 w/o traceback", _rc.returncode != 0 and "Traceback" not in _rc.stderr)
+
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

@@ -28,7 +28,7 @@ CLASS_STYLE = {
 
 def build(args):
     paths = [x for x in (args.prompts, args.log, args.metrics, args.metrics_later,
-                         args.pair_before, args.pair_after) if x]
+                         args.pair_before, args.pair_after, args.smi_file) if x]
     synth = args.synthetic or any("examples" in os.path.normpath(os.path.abspath(x)).split(os.sep) for x in paths)
     out = {"redacted_examples": not args.show_examples, "sections": {},
            "synthetic": bool(synth),
@@ -39,12 +39,13 @@ def build(args):
         prompts = prompt_diag.load(args.prompts)
         out["sections"]["prompts"] = prompt_diag.diagnose(prompts, redact=not args.show_examples)
         out["_lens"] = [len(p) for p in prompts[:8]]
-    if args.log or args.metrics or args.metrics_later:
+    if args.log or args.metrics or args.metrics_later or args.smi_file:
         lt = open(args.log, encoding="utf-8").read() if args.log else None
         m1 = open(args.metrics, encoding="utf-8").read() if args.metrics else None
         m2 = open(args.metrics_later, encoding="utf-8").read() if args.metrics_later else None
+        st = open(args.smi_file, encoding="utf-8").read() if args.smi_file else None
         out["sections"]["environment"] = env_report.report(
-            lt, m1, args.mean_prompt_tokens, False, metrics_later_text=m2)
+            lt, m1, args.mean_prompt_tokens, False, metrics_later_text=m2, smi_text=st)
     if args.pair_before or args.pair_after:
         if not (args.pair_before and args.pair_after):
             raise prompt_diag.BadInput("--pair-before and --pair-after must be given together")
@@ -161,12 +162,12 @@ def render(res):
          'h2{font-size:16px;margin:0 0 10px}.sub{color:#4b5563;margin-bottom:16px}'
          '.card{background:#fff;border-radius:10px;padding:16px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.08)}'
          '.badge{color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;white-space:nowrap}'
-         'table{border-collapse:collapse;width:100%;table-layout:auto}.card{overflow-x:auto}th,td{overflow-wrap:anywhere;text-align:left;padding:7px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top;font-size:14px}'
+         '*{box-sizing:border-box}table{border-collapse:collapse;width:100%;table-layout:auto}.swipe{display:none}.card{overflow-x:auto}th,td{overflow-wrap:anywhere;text-align:left;padding:7px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top;font-size:14px}'
          'th{font-size:12px;color:#4b5563;text-transform:uppercase;letter-spacing:.04em}'
          '.unk{color:#b91c1c;font-weight:700}.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:#374151;margin-top:8px}'
          '.legend i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px}'
          '.na{color:#6b7280;font-style:italic}.foot{font-size:12px;color:#4b5563}.chart{overflow-x:auto}.chart svg{min-width:640px}'
-         '@media(max-width:600px){main{padding:10px}table,thead,tbody,tr,th,td{display:block;width:100%}'
+         '@media(max-width:600px){main{padding:10px}.swipe{display:block}table,thead,tbody,tr,th,td{display:block;width:100%}'
          'tr:first-child:has(th){display:none}tr{border:1px solid #e5e7eb;border-radius:8px;margin:8px 0;padding:4px 8px}'
          'td{border:none;padding:4px 0}td[data-l]:before{content:attr(data-l);display:block;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em}}'
          '</style></head><body><main>',
@@ -179,7 +180,7 @@ def render(res):
         if p.get("finding") == "identical":
             h.append('<p>All %d prompts are byte-identical. Nothing to diagram.</p>' % p["prompts"])
         else:
-            h.append('<div class="chart">' + svg_layout(p, res["_lens"]) + '</div>')
+            h.append('<p class="foot swipe">Swipe the chart sideways to see all of it.</p><div class="chart">' + svg_layout(p, res["_lens"]) + '</div>')
             if not res["redacted_examples"] and p.get("first_divergence"):
                 h.append('<table><tr><th>Values at the first differing line (prompt text)</th></tr>')
                 for ex in p["first_divergence"]["examples"]:
@@ -216,7 +217,7 @@ def render(res):
         for k, v in setting_rows:
             unk = v == env_report.NA
             h.append('<tr><td data-l="Setting">%s</td><td data-l="Value" class="%s">%s</td><td data-l="Source">%s</td></tr>'
-                     % (E(k), "unk" if unk else "", E(UNKNOWN if unk else str(v)), E(e["sources"].get(k, ""))))
+                     % (E(k), "unk" if unk else "", E(UNKNOWN if unk else ("; ".join(v) if isinstance(v, list) else str(v))), E(e["sources"].get(k, ""))))
         if setting_rows:
             h.append('</table>')
         if e["windows"]:
@@ -243,7 +244,8 @@ def render(res):
         for lab, k in (("before (timestamp first)", "before"), ("after (timestamp moved)", "after")):
             d = m[k]
             h.append('<tr><td data-l="Run">%s</td><td data-l="Tokens queried">%d</td><td data-l="Tokens hit">%d</td><td data-l="Hit rate"><b>%s%%</b></td></tr>' % (E(lab), d["prompt_tokens_queried"], d["cached_tokens_hit"], d["hit_rate_pct"]))
-        h.append('</table><p class="foot">%s</p>' % E(m["verdict"]))
+        h.append('</table><p class="foot">%s Scope: one serial run of our synthetic workload on a real Muse Glimmer 30B engine, for the preset experiment only.</p>'
+                 % E(m["verdict"].split(" Scope:")[0]))
     else:
         h.append('<p class="na">No measured pair provided: <span class="unk">unknown</span>. Measuring needs a served model and a before/after run.</p>')
     h.append('</div>')
@@ -267,7 +269,7 @@ def render(res):
 def main(argv):
     ap = argparse.ArgumentParser(description="CacheLens combined visual report")
     ap.add_argument("--prompts"); ap.add_argument("--log"); ap.add_argument("--metrics")
-    ap.add_argument("--metrics-later"); ap.add_argument("--mean-prompt-tokens", type=float)
+    ap.add_argument("--metrics-later"); ap.add_argument("--smi-file"); ap.add_argument("--mean-prompt-tokens", type=float)
     ap.add_argument("--pair-before"); ap.add_argument("--pair-after")
     ap.add_argument("--show-examples", action="store_true")
     ap.add_argument("--synthetic", action="store_true", help="label the report as SYNTHETIC example data")

@@ -141,13 +141,35 @@ def series_of(mt, name):
     """{label_text: value} for one metric name."""
     return {k[len(name):]: v for k, v in mt.items() if k.split("{")[0] == name}
 
-def gpu_names():
+SMI_CMD = ["nvidia-smi", "--query-gpu=index,name,memory.total,memory.used,driver_version",
+           "--format=csv,noheader,nounits"]
+
+def parse_smi(text):
+    """Parse output of the fixed SMI_CMD (CSV, MiB, no units). Fails closed."""
+    gpus = []
+    for line in (text or "").strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) != 5:
+            raise BadInput("nvidia-smi output not in the expected CSV form; run exactly: "
+                           + " ".join(SMI_CMD))
+        try:
+            idx, total, used = int(parts[0]), float(parts[2]), float(parts[3])
+        except ValueError:
+            raise BadInput("nvidia-smi output has non-numeric index/memory fields")
+        if not (math.isfinite(total) and math.isfinite(used) and total > 0 and 0 <= used <= total * 1.01) or not parts[1]:
+            raise BadInput("nvidia-smi output has implausible values")
+        gpus.append({"index": idx, "name": parts[1], "memory_total_mib": total,
+                     "memory_used_mib_at_query": used, "driver_version": parts[4]})
+    if not gpus:
+        raise BadInput("nvidia-smi output is empty")
+    return gpus
+
+def collect_smi_local():
+    """Run the fixed read-only command on THIS machine. Returns text or None."""
     try:
-        r = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=15)
+        r = subprocess.run(SMI_CMD, capture_output=True, text=True, timeout=15)
         if r.returncode == 0 and r.stdout.strip():
-            return [l.strip() for l in r.stdout.strip().splitlines()]
+            return r.stdout
     except (OSError, subprocess.TimeoutExpired):
         pass
     return None
@@ -192,7 +214,7 @@ def window_for(mt, mt2):
                     "reason": "neither snapshot contains prefix-cache query/hit counters"})
     return out
 
-def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_text=None):
+def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_text=None, smi_text=None):
     if mean_prompt_tokens is not None and not (isinstance(mean_prompt_tokens, (int, float))
                                                and math.isfinite(mean_prompt_tokens)
                                                and mean_prompt_tokens > 0):
@@ -230,12 +252,25 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
         mt2 = parse_metrics(metrics_later_text)
         if not mt2:
             raise BadInput("no recognized vLLM series in --metrics-later")
-    if use_smi:
-        g = gpu_names()
-        facts["nvidia_smi_gpus_this_machine"] = g if g else NA
-        sources["nvidia_smi_gpus_this_machine"] = (
-            "nvidia-smi on the machine running THIS report - only the model server's "
-            "hardware if you run it on the serving host")
+    smi_gpus = None
+    if smi_text is not None or use_smi:
+        if smi_text is not None:
+            smi_gpus = parse_smi(smi_text)
+            facts["gpu_hardware"] = ["#%d %s, %.1f GiB total, driver %s" % (
+                g["index"], g["name"], g["memory_total_mib"] / 1024, g["driver_version"]) for g in smi_gpus]
+            sources["gpu_hardware"] = ("nvidia-smi OUTPUT FILE you supplied; CacheLens cannot verify which "
+                                       "host produced it")
+        else:
+            txt = collect_smi_local()
+            if txt is None:
+                facts["gpu_hardware"] = NA
+                sources["gpu_hardware"] = "nvidia-smi not available/failed on the machine running this report"
+            else:
+                smi_gpus = parse_smi(txt)
+                facts["gpu_hardware"] = ["#%d %s, %.1f GiB total, driver %s" % (
+                    g["index"], g["name"], g["memory_total_mib"] / 1024, g["driver_version"]) for g in smi_gpus]
+                sources["gpu_hardware"] = ("nvidia-smi run on the machine running THIS report - only the "
+                                           "model server's hardware if this is the serving host")
 
     expected = ["vllm_version", "model", "enable_prefix_caching", "dtype",
                 "max_seq_len", "gpu_kv_cache_tokens", "kv_cache_memory_gib",
@@ -246,7 +281,7 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
             facts[k] = NA
             sources[k] = NA
             unknowns.append(k)
-    if not use_smi:
+    if not smi_gpus:
         unknowns.append("GPU model name (needs nvidia-smi on the serving host, or platform specs)")
 
     if facts["enable_prefix_caching"] is False:
@@ -308,10 +343,21 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
                                        % (", ".join(sorted(names)), ", ".join(sorted(known))),
                         "evidence": "model_name label vs served_model_name/model in the log",
                         "note": "the log and metrics may come from different servers; do not combine them"})
-    if use_smi and log_text is not None:
-        obs.append({"observation": "GPU names come from the machine running this report, the log from a file",
-                    "evidence": "--with-nvidia-smi together with --log",
-                    "note": "only the same host if you ran this on the serving machine; otherwise ignore the GPU names"})
+    if smi_gpus and isinstance(facts.get("gpu_memory_total_gib"), float):
+        log_gib = facts["gpu_memory_total_gib"]
+        tots = [g["memory_total_mib"] / 1024 for g in smi_gpus]
+        if any(abs(t - log_gib) / t <= 0.03 for t in tots):
+            obs.append({"observation": "GPU memory in the nvidia-smi output is consistent with the log (%.2f GiB)" % log_gib,
+                        "evidence": "smi totals %s GiB vs log device total" % ", ".join("%.2f" % t for t in tots),
+                        "note": "consistent with, not proof of, the same host"})
+        else:
+            obs.append({"observation": "WARNING: nvidia-smi GPU memory does not match the log's device memory",
+                        "evidence": "smi totals %s GiB vs log %.2f GiB" % (", ".join("%.2f" % t for t in tots), log_gib),
+                        "note": "the smi output and the log probably come from different machines; do not combine them"})
+    elif smi_gpus and log_text is not None:
+        obs.append({"observation": "nvidia-smi output cannot be cross-checked with this log (no device memory line)",
+                    "evidence": "log has no 'Free memory on device' line",
+                    "note": "host identity unverified; treat GPU names as the smi host's only"})
     if not obs and mt is not None:
         obs.append({"observation": "metrics parsed (%d series) but no valid reading is possible" % len(mt),
                     "evidence": "no usage series and no valid two-snapshot window",
@@ -334,6 +380,7 @@ def main(argv):
     ap.add_argument("--log"); ap.add_argument("--metrics"); ap.add_argument("--metrics-later")
     ap.add_argument("--mean-prompt-tokens", type=float)
     ap.add_argument("--with-nvidia-smi", action="store_true")
+    ap.add_argument("--smi-file", help="saved output of: " + " ".join(SMI_CMD))
     a = ap.parse_args(argv)
     log_text = metrics_text = metrics_later = None
     try:
@@ -349,12 +396,19 @@ def main(argv):
     except UnicodeDecodeError:
         print("INCONCLUSIVE - input is not valid UTF-8 text")
         return 2
-    if log_text is None and metrics_text is None and not a.with_nvidia_smi:
+    smi_text = None
+    if a.smi_file:
+        try:
+            smi_text = open(a.smi_file, encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"INCONCLUSIVE - cannot read --smi-file: {getattr(e, 'strerror', None) or e}")
+            return 2
+    if log_text is None and metrics_text is None and not a.with_nvidia_smi and smi_text is None:
         print("INCONCLUSIVE - give --log and/or --metrics (or --with-nvidia-smi on the server host)")
         return 2
     try:
         res = report(log_text, metrics_text, a.mean_prompt_tokens, a.with_nvidia_smi,
-                     metrics_later_text=metrics_later)
+                     metrics_later_text=metrics_later, smi_text=smi_text)
     except BadInput as e:
         print(f"INCONCLUSIVE - {e}")
         return 2
