@@ -1,0 +1,22 @@
+ffconcat version 1.0
+file 'w1.png'
+duration 10
+file 'w2.png'
+duration 12
+file 'w3.png'
+duration 20
+file 'w4.png'
+duration 12
+file 'w5.png'
+duration 8
+file 'w6.png'
+duration 20
+file 'w7.png'
+duration 18
+file 'w8.png'
+duration 14
+file 'w9.png'
+duration 18
+file 'w10.png'
+duration 8
+file 'w10.png'

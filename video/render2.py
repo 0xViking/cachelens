@@ -49,10 +49,10 @@ S.append((frame("w3.png","SYNTHETIC EXAMPLE - the report on your own prompts fil
  img="user_banner_card.png"),20))
 S.append((frame("w4.png","REAL log from the captured Glimmer run (vllm.log) - parsed settings",GREEN,
  ["Server facts come from the log. Nothing is guessed:","GPU model is not in the log, so it stays unknown."],
- img="full_2.png",crop=(0,0,1404,560)),12))
+ img="full_2.png",crop=(0,0,1920,583)),12))
 S.append((frame("w5.png","REAL log - cache capacity and what stays unknown",GREEN,
  ["GPU KV cache: 776,150 tokens. Prefix caching: enabled.","No nvidia-smi was captured, so GPU model: unknown."],
- img="full_2.png",crop=(0,480,1404,818)),8))
+ img="full_2.png",crop=(0,583,1920,1119)),8))
 S.append((frame("w6.png","MEASURED - real engine counters, same synthetic workload",GREEN,
  ["Moving the timestamp after the shared prefix:","1.0% -> 93.6% prefix-cache hit rate."],
  img="full_3.png"),20))

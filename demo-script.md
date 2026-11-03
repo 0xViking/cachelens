@@ -1,35 +1,35 @@
-# CacheLens demo video script (captioned screen capture, target ~2:30)
+# CacheLens - voiceover script (silent video v2, 2:20)
 
-All footage is a labeled replay of the captured Nov 3, 2026 run evidence
-(caption: "captured run replay"). Numbers below are the verified results.
+Read at a relaxed pace (~130 words/min). Timings are scene starts in the video; each block fits its scene with a little room.
 
-## 0:00-0:15 Problem
-Caption card: "Repeated prompt processing can waste GPU time. When a shared
-prefix stops caching, latency rises - and nothing tells you why."
+**1. 0:00-0:10 - problem**
+"Agents resend the same long prompt every request. If one per-request value, like a timestamp, sits near the start, the prefix cache can't reuse it. CacheLens finds that."
 
-## 0:15-0:45 The broken workload
-Screen: terminal replay of evidence/ts_before.probe.log (18 requests,
-prompt=5796 tokens each, ~3.7s per request) + metrics delta 1,088/104,328.
-Caption: "18 agent requests share a 25.5KB runbook prefix. vLLM's prefix
-cache should absorb it. Measured hit rate: 1.0% (1,088 of 104,328 tokens)."
+**2. 0:10-0:22 - broken run**
+"On a real Muse Glimmer 30B engine, with a timestamp first, the engine's own counters show a 1.0% prefix-cache hit rate. 1,088 of 104,328 tokens reused."
 
-## 0:45-1:30 Diagnosis
-Screen: analyze.py output - diverges_at_char 28, the [request_time=...]
-context snippet, verdict.
-Caption: "CacheLens diffs the captured prompts: the common leading prefix
-ends at char 28 - a timestamp placed BEFORE the shared prefix. Early
-variation breaks reuse of the long shared prefix; the low measured hit rate
-is consistent with that layout."
+**3. 0:22-0:42 - your own prompt file (example data)**
+"You can give it your own prompt file. This example is made up, and it's labeled that way. The report draws every prompt and marks where the shared prefix ends. Here it ends at character 118, so most of each prompt can't be shared as a leading prefix."
 
-## 1:30-2:10 Replay result
-Screen: ts_after metrics delta 97,696/104,328 (93.6%), probe log ~2.4s/req,
-OBSERVED INCREASE line.
-Caption: "Moving per-request fields after the shared prefix coincided with
-the hit rate rising to 93.6% (engine metrics, identical 104,328-token
-synthetic workload). Median latency: -34% (3.69s -> 2.42s). Single synthetic
-serial run on one A100 - not a production benchmark."
+**4. 0:42-0:54 - real log, settings**
+"From the real server log it reads the settings: vLLM version, model, prefix caching enabled."
 
-## 2:10-2:30 Close
-Card: "CacheLens - capture, diagnose, verify prefix caching.
-Muse Glimmer 30B (Meta open weights) + vLLM on a single A100.
-Built during the Meta Global AI Developer Hackathon."
+**5. 0:54-1:02 - real log, unknowns**
+"GPU KV cache is 776,150 tokens. But the log doesn't say which GPU. We didn't capture nvidia-smi, so the report says unknown instead of guessing."
+
+**6. 1:02-1:22 - measured result**
+"After moving the timestamp behind the shared prefix, the same workload goes from 1.0% to 93.6% hit rate, from engine counters. This is one serial run of our synthetic workload, 18 requests per variant. We don't claim the same server instance was verified, and no latency, cost or answer-quality claim."
+
+**7. 1:22-1:40 - findings table**
+"Each finding says what kind of evidence it is, and what's still unknown or needs checking."
+
+**8. 1:40-1:54 - nvidia-smi**
+"For hardware, run one fixed read-only nvidia-smi command on the serving host and pass the file in. CacheLens can't verify which host it came from. It's tested on fixtures, not yet on a real GPU."
+
+**9. 1:54-2:12 - provenance**
+"On provenance: the idea and a separate small prototype came before the building period, and aren't in this repo. The code and the Glimmer runs are new for this repo. A comparison of the recoverable old source found no substantive shared code, though missing old edits can't be excluded."
+
+**10. 2:12-2:20 - close**
+"CacheLens: find where your prompts break prefix caching."
+
+Word count about 290 - if you run long, drop the last sentence of scene 3 or 9. Every number on screen is real except scene 3 (labeled SYNTHETIC EXAMPLE).
