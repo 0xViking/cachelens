@@ -378,6 +378,8 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
                            "Parsing targets vLLM's V1 log lines and metric names as seen in "
                            "ONE tested build (0.26.1rc1); other builds may differ.")}
 
+LOCAL_SMI = "<local nvidia-smi on the machine running this report>"   # never a fixture
+
 def is_fixture(path):
     import os
     return bool(path) and "examples" in os.path.normpath(os.path.abspath(path)).split(os.sep)
@@ -423,7 +425,7 @@ def main(argv):
     try:
         res = report(log_text, metrics_text, a.mean_prompt_tokens, a.with_nvidia_smi,
                      metrics_later_text=metrics_later, smi_text=smi_text,
-                     skip_smi_crosscheck=fixture_mix_reason(a.log, a.smi_file))
+                     skip_smi_crosscheck=fixture_mix_reason(a.log, a.smi_file or (LOCAL_SMI if a.with_nvidia_smi else None)))
     except BadInput as e:
         print(f"INCONCLUSIVE - {e}")
         return 2

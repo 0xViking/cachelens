@@ -639,5 +639,17 @@ _rc = subprocess.run([sys.executable, "env_report.py", "--log", "examples/env/vl
 check("env_report CLI fixture log + real smi: skipped too", "cross-check skipped" in _rc.stdout)
 check("README matches hedged wording", "probably" not in open("README.md").read().split("GPU hardware (nvidia-smi)")[1])
 
+import io as _io, contextlib as _cl
+def _cli(args):
+    buf = _io.StringIO()
+    with _mock.patch("env_report.subprocess.run", return_value=_ok), _cl.redirect_stdout(buf):
+        rc = env_report.main(args)
+    return rc, buf.getvalue()
+_rc, _out = _cli(["--log", "examples/env/vllm_prefix_off.log", "--with-nvidia-smi"])
+check("CLI fixture log + LOCAL smi: cross-check skipped (mock smi memory coincides)",
+      _rc == 0 and "cross-check skipped" in _out and "consistent with the log" not in _out)
+_rc, _out = _cli(["--log", "evidence/vllm.log", "--with-nvidia-smi"])
+check("CLI real log + LOCAL smi: cross-check still runs", _rc == 0 and "consistent with the log" in _out)
+
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)
