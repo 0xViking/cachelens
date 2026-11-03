@@ -620,5 +620,24 @@ check("fixture smi next to real log: cross-check skipped, no 'consistent' claim"
       not any("consistent with the log" in o["observation"] for o in _rj["sections"]["environment"]["observations"])
       and any("cross-check skipped" in o["observation"] for o in _rj["sections"]["environment"]["observations"]))
 
+# review fixes: decode error, fixture-mix in both directions, coincident memory
+with _mock.patch("env_report.subprocess.run", side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")):
+    _r = env_report.report(None, open("examples/env/metrics_snap1.txt").read(), None, True)
+    check("local collector UnicodeDecodeError -> honest unknown, no crash",
+          _r["facts"]["gpu_hardware"] == env_report.NA)
+import tempfile as _tf
+_real_smi = os.path.join(_tf.mkdtemp(), "smi_real.csv")
+open(_real_smi, "w").write(open("examples/env/smi_h100.csv").read())   # memory coincides with real log
+_rc = subprocess.run([sys.executable, "cachelens.py", "--log", "examples/env/vllm_prefix_off.log", "--smi-file", _real_smi, "--out", "/tmp/r_smi4"], capture_output=True, text=True)
+_o = json.load(open("/tmp/r_smi4/report.json"))["sections"]["environment"]["observations"]
+check("fixture log + non-fixture smi: cross-check skipped even if memory coincides",
+      rc_ok := (_rc.returncode == 0) and any("cross-check skipped" in o["observation"] for o in _o)
+      and not any("consistent with the log" in o["observation"] or "does not match" in o["observation"] for o in _o))
+_rc = subprocess.run([sys.executable, "env_report.py", "--log", "evidence/vllm.log", "--smi-file", "examples/env/smi_h100.csv"], capture_output=True, text=True)
+check("env_report CLI real log + fixture smi: skipped too", "cross-check skipped" in _rc.stdout and "consistent with the log" not in _rc.stdout)
+_rc = subprocess.run([sys.executable, "env_report.py", "--log", "examples/env/vllm_prefix_off.log", "--smi-file", _real_smi], capture_output=True, text=True)
+check("env_report CLI fixture log + real smi: skipped too", "cross-check skipped" in _rc.stdout)
+check("README matches hedged wording", "probably" not in open("README.md").read().split("GPU hardware (nvidia-smi)")[1])
+
 print(f"{total} checks; " + ("FAILED: " + ", ".join(fails) if fails else "ALL TESTS PASSED"))
 sys.exit(1 if fails else 0)

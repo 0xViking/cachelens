@@ -175,6 +175,7 @@ Run this fixed read-only command on the model-serving host and save the output:
     python3 cachelens.py --log vllm.log --smi-file smi.csv
 
 CacheLens parses name, total memory and driver. It cannot verify which host produced the file; it only
-cross-checks total GPU memory against the log ("consistent with, not proof of" / "WARNING: probably
-different machines"). `env_report.py --with-nvidia-smi` runs the same fixed command (no shell, 15 s timeout)
+cross-checks total GPU memory against the log ("consistent with, not proof of" / "WARNING ... does not
+match", which may be a different machine, GPU index, tensor-parallel/MIG slice or container limit: verify the
+host and device mapping). The check is skipped when exactly one of the log and smi file is a made-up fixture. `env_report.py --with-nvidia-smi` runs the same fixed command (no shell, 15 s timeout)
 on the machine running the report. Tested with fixtures and a mocked subprocess; NOT validated on a real GPU host yet.

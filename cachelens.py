@@ -48,14 +48,10 @@ def build(args):
         m2 = open(args.metrics_later, encoding="utf-8").read() if args.metrics_later else None
         st = open(args.smi_file, encoding="utf-8").read() if args.smi_file else None
         out["sections"]["environment"] = env_report.report(
-            lt, m1, args.mean_prompt_tokens, False, metrics_later_text=m2, smi_text=st)
+            lt, m1, args.mean_prompt_tokens, False, metrics_later_text=m2, smi_text=st,
+            skip_smi_crosscheck=env_report.fixture_mix_reason(args.log, args.smi_file))
         if args.smi_file and os.path.basename(args.smi_file) in out["fixture_inputs"] and "gpu_hardware" in out["sections"]["environment"]["sources"]:
             out["sections"]["environment"]["sources"]["gpu_hardware"] = "FIXTURE (made up): " + out["sections"]["environment"]["sources"]["gpu_hardware"]
-            if mixed and args.log and os.path.basename(args.log) not in out["fixture_inputs"]:
-                _e = out["sections"]["environment"]
-                _e["observations"] = [o for o in _e["observations"] if "nvidia-smi" not in o["observation"]]
-                _e["observations"].append({"observation": "nvidia-smi cross-check skipped: the smi file is a made-up fixture",
-                    "evidence": "fixture smi file next to a real log", "note": "not evidence about the log's host"})
     if args.pair_before or args.pair_after:
         if not (args.pair_before and args.pair_after):
             raise prompt_diag.BadInput("--pair-before and --pair-after must be given together")

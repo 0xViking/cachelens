@@ -170,7 +170,7 @@ def collect_smi_local():
         r = subprocess.run(SMI_CMD, capture_output=True, text=True, timeout=15)
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError, ValueError):
         pass
     return None
 
@@ -214,7 +214,7 @@ def window_for(mt, mt2):
                     "reason": "neither snapshot contains prefix-cache query/hit counters"})
     return out
 
-def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_text=None, smi_text=None):
+def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_text=None, smi_text=None, skip_smi_crosscheck=None):
     if mean_prompt_tokens is not None and not (isinstance(mean_prompt_tokens, (int, float))
                                                and math.isfinite(mean_prompt_tokens)
                                                and mean_prompt_tokens > 0):
@@ -343,7 +343,11 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
                                        % (", ".join(sorted(names)), ", ".join(sorted(known))),
                         "evidence": "model_name label vs served_model_name/model in the log",
                         "note": "the log and metrics may come from different servers; do not combine them"})
-    if smi_gpus and isinstance(facts.get("gpu_memory_total_gib"), float):
+    if smi_gpus and skip_smi_crosscheck:
+        obs.append({"observation": "nvidia-smi cross-check skipped: " + skip_smi_crosscheck,
+                    "evidence": "one compared input is a made-up fixture and the other is not",
+                    "note": "not evidence about the log's host"})
+    elif smi_gpus and isinstance(facts.get("gpu_memory_total_gib"), float):
         log_gib = facts["gpu_memory_total_gib"]
         tots = [g["memory_total_mib"] / 1024 for g in smi_gpus]
         if any(abs(t - log_gib) / t <= 0.03 for t in tots):
@@ -373,6 +377,16 @@ def report(log_text, metrics_text, mean_prompt_tokens, use_smi, metrics_later_te
                            "host and does not claim a hardware bottleneck from metadata. "
                            "Parsing targets vLLM's V1 log lines and metric names as seen in "
                            "ONE tested build (0.26.1rc1); other builds may differ.")}
+
+def is_fixture(path):
+    import os
+    return bool(path) and "examples" in os.path.normpath(os.path.abspath(path)).split(os.sep)
+
+def fixture_mix_reason(log_path, smi_path):
+    """Reason string if exactly one of log/smi is a made-up fixture, else None."""
+    if log_path and smi_path and is_fixture(log_path) != is_fixture(smi_path):
+        return "one of the log and the smi file is a made-up fixture"
+    return None
 
 def main(argv):
     import argparse
@@ -408,7 +422,8 @@ def main(argv):
         return 2
     try:
         res = report(log_text, metrics_text, a.mean_prompt_tokens, a.with_nvidia_smi,
-                     metrics_later_text=metrics_later, smi_text=smi_text)
+                     metrics_later_text=metrics_later, smi_text=smi_text,
+                     skip_smi_crosscheck=fixture_mix_reason(a.log, a.smi_file))
     except BadInput as e:
         print(f"INCONCLUSIVE - {e}")
         return 2
