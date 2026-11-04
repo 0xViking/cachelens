@@ -9,6 +9,13 @@ Built during the Meta Global AI Developer Hackathon (Oct 27 - Nov 4 window)
 against **Muse Glimmer 30B** (Meta open weights, Apache 2.0) served with
 vLLM on a single GPU.
 
+## Demo video
+Narrated 3-minute walkthrough (Nov 4): plays inline on the
+[v1.0.0 release page](https://github.com/0xViking/cachelens/releases/tag/v1.0.0)
+(direct link: https://github.com/user-attachments/assets/0dcbe18c-d60c-48a7-8045-f5085820f847).
+The older silent cuts under `video/` (`cachelens-demo.mp4`, `-v2`, `-v3`) are
+superseded working drafts kept for history; the release video is the final cut.
+
 ## The demo story (verified on Muse Glimmer 30B, Nov 3 2026)
 1. An agent workload (18 dispatcher requests sharing a 25.5KB runbook prefix)
    is probed against vLLM - `probe.py --variant ts_before`.
